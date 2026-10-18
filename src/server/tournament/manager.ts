@@ -1,5 +1,6 @@
 import type { TournamentDetail, TournamentSummary } from "../../shared/protocol.ts";
 import { usersSharingIp } from "../db.ts";
+import { notifyHubEventFinished } from "../integration.ts";
 import { insertTournament, loadTournaments, saveBatch, saveResult } from "./store.ts";
 import { PLAYER_CAPS, TABLE_SIZE, defaultConfig, defaultLevels } from "./structure.ts";
 import { Tournament, type TournamentHooks } from "./tournament.ts";
@@ -192,6 +193,11 @@ export class TournamentManager {
       playerFinished: (userId, place, points) => {
         saveResult(tournamentId, userId, place, points);
         n.playerFinished(tournamentId, userId, place, points);
+      },
+      tournamentFinished: () => {
+        // Save first so the hub finds the final status and results when it calls back.
+        this.flush();
+        notifyHubEventFinished(tournamentId);
       },
       dirty: (what) => {
         if (what === "meta") this.dirtyMeta.add(tournamentId);

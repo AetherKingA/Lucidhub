@@ -82,6 +82,39 @@ export function loadTournaments(now: number): { meta: TournamentMeta; tables: Ta
     }));
 }
 
+const metaByIdStmt = db.prepare(`SELECT meta_json FROM tournaments WHERE id = ?`);
+const endedSinceStmt = db.prepare(`
+  SELECT meta_json FROM tournaments
+  WHERE status IN ('finished', 'cancelled') AND updated_at >= ?
+  ORDER BY id
+`);
+const resultsStmt = db.prepare(`
+  SELECT u.discord_id AS discordId, u.username, r.place
+  FROM tournament_results r JOIN users u ON u.id = r.user_id
+  WHERE r.tournament_id = ?
+  ORDER BY r.place
+`);
+
+const parseMeta = (r: { meta_json: string } | undefined) => {
+  const meta = r ? (JSON.parse(r.meta_json) as TournamentMeta) : null;
+  return meta?.id === undefined ? null : meta;
+};
+
+/** A saved tournament, including ones that have already left memory. Null if unknown or never saved. */
+export function loadMeta(id: number): TournamentMeta | null {
+  return parseMeta(metaByIdStmt.get(id) as { meta_json: string } | undefined);
+}
+
+/** Finished or cancelled tournaments last saved at or after `since`. */
+export function loadEndedMetas(since: number): TournamentMeta[] {
+  return (endedSinceStmt.all(since) as { meta_json: string }[]).flatMap((r) => parseMeta(r) ?? []);
+}
+
+/** Final places, best first. */
+export function loadResults(tournamentId: number): { discordId: string; username: string; place: number }[] {
+  return (resultsStmt.all(tournamentId) as { discordId: string; username: string; place: number }[]).map((r) => ({ ...r }));
+}
+
 export function saveResult(tournamentId: number, userId: number, place: number, points: number) {
   saveResultStmt.run(tournamentId, userId, place, points);
 }

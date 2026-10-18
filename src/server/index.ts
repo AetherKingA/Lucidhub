@@ -7,6 +7,7 @@ import fastifyWebsocket from "@fastify/websocket";
 import { registerAuthRoutes } from "./auth.ts";
 import { config, discordConfigured } from "./config.ts";
 import { db } from "./db.ts";
+import { registerIntegrationRoutes } from "./integration.ts";
 import { keepAwake } from "./keepAwake.ts";
 import { Realtime } from "./realtime.ts";
 import { registerTournamentRoutes } from "./routes.ts";
@@ -25,6 +26,7 @@ manager.load(Date.now());
 registerAuthRoutes(app);
 realtime.register(app);
 registerTournamentRoutes(app, manager);
+registerIntegrationRoutes(app, manager);
 app.get("/api/health", async () => ({ ok: true, online: realtime.onlineCount() }));
 
 // Serve the built website. Unknown non-API paths get index.html so client-side routes work.

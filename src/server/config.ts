@@ -32,6 +32,11 @@ export const config = {
   keepAwake: env("KEEP_AWAKE", "true") === "true",
   dbPath: resolve(ROOT, env("DB_PATH", "data/poker.db")),
   distDir: resolve(ROOT, "dist"),
+  /** Event Hub (the admin dashboard that hands out prizes). The integration is off while the secret is empty. */
+  hub: {
+    url: env("HUB_URL", "http://127.0.0.1:3100").replace(/\/$/, ""),
+    secret: env("HUB_SECRET", ""),
+  },
 };
 
 export const discordConfigured = Boolean(config.discord.clientId && config.discord.clientSecret);

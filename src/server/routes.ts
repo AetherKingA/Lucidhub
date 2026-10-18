@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { publicUser, userFromRequest } from "./auth.ts";
 import type { CreateOptions, TournamentManager } from "./tournament/manager.ts";
-import { TournamentError } from "./tournament/tournament.ts";
+import { type Tournament, TournamentError } from "./tournament/tournament.ts";
 
 function requireAdmin(req: FastifyRequest, reply: FastifyReply) {
   const user = userFromRequest(req);
@@ -10,6 +10,32 @@ function requireAdmin(req: FastifyRequest, reply: FastifyReply) {
     return null;
   }
   return user;
+}
+
+/**
+ * Runs one admin operation on a tournament. Shared by the admin routes and the Event Hub integration.
+ * Returns false for an unknown op; throws TournamentError when the op isn't allowed right now.
+ */
+export function runAdminOp(t: Tournament, op: string, actorName: string, body: { userId?: number } | undefined, now: number): boolean {
+  switch (op) {
+    case "start":
+      t.start(now);
+      return true;
+    case "pause":
+      t.pause(`Paused by ${actorName}`, now);
+      return true;
+    case "resume":
+      t.resume(now);
+      return true;
+    case "cancel":
+      t.cancel(now);
+      return true;
+    case "kick":
+      t.kick(Number(body?.userId), now);
+      return true;
+    default:
+      return false;
+  }
 }
 
 export function registerTournamentRoutes(app: FastifyInstance, manager: TournamentManager) {
@@ -33,27 +59,9 @@ export function registerTournamentRoutes(app: FastifyInstance, manager: Tourname
       if (!admin) return;
       const t = manager.get(Number(req.params.id));
       if (!t) return reply.code(404).send({ error: "Tournament not found" });
-      const now = Date.now();
       try {
-        switch (req.params.op) {
-          case "start":
-            t.start(now);
-            break;
-          case "pause":
-            t.pause(`Paused by ${admin.username}`, now);
-            break;
-          case "resume":
-            t.resume(now);
-            break;
-          case "cancel":
-            t.cancel(now);
-            break;
-          case "kick":
-            t.kick(Number(req.body?.userId), now);
-            break;
-          default:
-            return reply.code(404).send({ error: "Unknown operation" });
-        }
+        if (!runAdminOp(t, req.params.op, admin.username, req.body, Date.now()))
+          return reply.code(404).send({ error: "Unknown operation" });
       } catch (err) {
         if (err instanceof TournamentError) return reply.code(400).send({ error: err.message });
         throw err;

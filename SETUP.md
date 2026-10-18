@@ -68,6 +68,23 @@ Sign in with the Discord account you put in `ADMIN_DISCORD_IDS`. You'll see an *
   again: the tournament comes back **paused** at the moment it stopped, mid-hand, with everyone's
   chips. Players' browsers reconnect by themselves. Click **Resume** when you're ready.
 
+## Event Hub integration
+
+The Event Hub (a separate admin dashboard on this PC) can create and control tournaments here, read
+the final places and hand out Discord prizes to the winners. It's off until you set a shared secret.
+
+1. In `.env`, set `HUB_SECRET` to the same long random string you put in the hub's config, and
+   `HUB_URL` to the hub's address (default `http://127.0.0.1:3100`, no trailing slash).
+2. Restart the server. The hub talks to this site at `http://127.0.0.1:3000`.
+
+Every request in both directions is signed with that secret (`X-Hub-Timestamp` +
+`X-Hub-Signature` = HMAC-SHA256 of `timestamp.body`) and rejected if the clock differs by more than
+five minutes. When a tournament finishes, this site POSTs `{"type":"event.finished"}` to
+`HUB_URL/api/games/poker/webhook`; if the hub is down, it picks the result up on its next poll.
+
+Routes (all under `/api/integration`): `GET /info`, `POST /events`, `GET /events?status=&since=`,
+`POST /events/:id/start|pause|resume|cancel`, `GET /events/:id/results`.
+
 ## Testing on your own PC
 
 You can try everything without Discord, from this PC only:

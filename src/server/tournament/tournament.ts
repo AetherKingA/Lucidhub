@@ -26,6 +26,8 @@ export interface TournamentHooks {
   playerMoved(userId: number, tableId: number): void;
   playerAdvanced(userId: number, round: number): void;
   playerFinished(userId: number, place: number, points: number): void;
+  /** The tournament produced its champion (not called on cancel). */
+  tournamentFinished(): void;
   /** Something needs saving: the meta row, or a table row (deleted = remove it). */
   dirty(what: "meta" | { tableId: number; deleted?: boolean }): void;
 }
@@ -39,6 +41,7 @@ export const noopHooks: TournamentHooks = {
   playerMoved: noop,
   playerAdvanced: noop,
   playerFinished: noop,
+  tournamentFinished: noop,
   dirty: noop,
 };
 
@@ -486,6 +489,7 @@ export class Tournament {
     this.closeAllTables();
     this.hooks.dirty("meta");
     this.hooks.lobbyChanged();
+    this.hooks.tournamentFinished();
   }
 
   // ---------------------------------------------------------------- clock
