@@ -7,6 +7,9 @@ an event ends and announces the winners in your server. Set it up once and it ru
 It runs on the same Windows PC as Poker Night and is **only reachable from this PC** (it isn't
 exposed through Tailscale Funnel — it holds your prize codes). One-time setup takes about 10 minutes.
 
+Your games live inside this folder, under `games/` (Poker Night is `games/poker-tournament`, with its
+own SETUP.md). Each game is its own project with its own git history; the hub's repo ignores `games/`.
+
 ## 1. Add a bot to your Discord application
 
 Use the same application you made for Poker Night (https://discord.com/developers/applications).

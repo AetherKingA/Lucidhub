@@ -94,10 +94,10 @@ export interface LaunchInput {
   autostart?: boolean;
 }
 
-/** Where Poker Night usually lives (next to the hub), so the dashboard can fill in its launch settings. */
+/** Poker Night lives in games/ inside the hub folder, so the dashboard can fill in its launch settings. */
 export function suggestedLaunch(key: string): { launchDir: string; launchCmd: string } | null {
   if (key !== "poker") return null;
-  const dir = resolve(ROOT, "../poker-tournament");
+  const dir = resolve(ROOT, "games/poker-tournament");
   return existsSync(resolve(dir, "scripts/hub-start.cmd")) ? { launchDir: dir, launchCmd: "scripts\\hub-start.cmd" } : null;
 }
 
