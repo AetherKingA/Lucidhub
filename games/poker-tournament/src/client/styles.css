@@ -557,3 +557,8 @@ kbd {
   .btn.act { min-height: 56px; font-size: 18px; padding: 8px 14px; }
   .pre { min-height: 46px; }
 }
+
+/* Chips-between-rounds modes */
+.mode-fair { color: var(--felt-bright); }
+.mode-bully { color: #ff8f88; }
+.big.mode-fair, .big.mode-bully { font-size: 20px; }

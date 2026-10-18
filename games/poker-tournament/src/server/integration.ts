@@ -62,7 +62,7 @@ function fields(): EventField[] {
   const d = defaultConfig();
   return [
     { name: "name", label: "Name", type: "text", default: d.name, help: "Up to 60 characters." },
-    { name: "startTime", label: "Start time", type: "datetime", help: "Epoch ms. Starts automatically if at least two players registered. Defaults to 30 minutes from now." },
+    { name: "startTime", label: "Start time", type: "datetime", help: "It starts by itself at this time if at least two players have registered." },
     {
       name: "maxPlayers",
       label: "Player cap",
@@ -72,6 +72,17 @@ function fields(): EventField[] {
       help: "6-max shootout: each cap collapses evenly to one final table.",
     },
     { name: "startingStack", label: "Starting stack", type: "number", default: d.startingStack, min: 1000, max: 1_000_000 },
+    {
+      name: "chipMode",
+      label: "Chips between rounds",
+      type: "select",
+      default: "fair",
+      options: [
+        { value: "fair", label: "Fair Play" },
+        { value: "bully", label: "Full-on Bullying" },
+      ],
+      help: "Fair Play: everyone starts each new table with the starting stack. Full-on Bullying: table winners keep every chip they won and bring it to their next table.",
+    },
     {
       name: "levels",
       label: "Blind structure",

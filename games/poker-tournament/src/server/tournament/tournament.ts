@@ -423,11 +423,11 @@ export class Tournament {
     const left = t.seats.filter((s): s is SeatPlayer => s !== null);
     if (left.length > 1) return;
     this.closeTable(t.id);
-    this.completeNode(this.node(t.id), left[0]?.userId ?? null, now);
+    this.completeNode(this.node(t.id), left[0]?.userId ?? null, now, left[0]?.chips);
   }
 
-  /** Records a table's winner and moves them up the bracket. */
-  private completeNode(node: BracketNode, winner: number | null, now: number) {
+  /** Records a table's winner and moves them up the bracket, with the chips they finished on. */
+  private completeNode(node: BracketNode, winner: number | null, now: number, chips?: number) {
     const m = this.meta;
     node.done = true;
     node.winner = winner;
@@ -444,6 +444,7 @@ export class Tournament {
       e.tableId = null;
       e.advancedTo = parent.id;
       e.round = parent.round;
+      if (chips !== undefined) e.carryChips = chips;
       parent.players.push(winner);
       this.hooks.playerAdvanced(winner, parent.round);
     }
@@ -451,10 +452,20 @@ export class Tournament {
 
     // Whole group done. Normally that's a new table; if only one winner came through, they advance again.
     if (parent.players.length >= 2) this.openTable(parent, now);
-    else this.completeNode(parent, parent.players[0] ?? null, now);
+    else this.completeNode(parent, parent.players[0] ?? null, now, parent.players[0] !== undefined ? m.entrants[parent.players[0]]!.carryChips : undefined);
   }
 
-  /** Seats a bracket node's players at a fresh table: equal stacks, blinds back at level 1. */
+  /** What a player sits down with: the starting stack (Fair Play), or what they won (Full-on Bullying). */
+  private stackFor(userId: number) {
+    const m = this.meta;
+    if (m.config.chipMode !== "bully") return m.config.startingStack;
+    return m.entrants[userId]!.carryChips ?? m.config.startingStack;
+  }
+
+  /**
+   * Seats a bracket node's players at a fresh table, blinds back at level 1. Fair Play: equal stacks.
+   * Full-on Bullying: everyone brings the chips they won their last table with.
+   */
   private openTable(node: BracketNode, now: number) {
     const m = this.meta;
     const t: TableState = {
@@ -473,7 +484,7 @@ export class Tournament {
     node.players.forEach((userId, i) => {
       t.seats[seatOrder[i]!] = {
         userId,
-        chips: m.config.startingStack,
+        chips: this.stackFor(userId),
         away: false,
         leaving: false,
         timeBankMs: m.config.timeBankSeconds * 1000,
@@ -642,6 +653,7 @@ export class Tournament {
       remaining: m.remaining,
       maxPlayers: m.config.maxPlayers,
       startingStack: m.config.startingStack,
+      chipMode: m.config.chipMode ?? "fair",
       round: m.status === "registering" ? 1 : this.currentRound(),
       totalRounds: m.status === "registering" ? bracketShape(Math.max(2, this.entrantCount), m.config.tableSize).length : m.totalRounds,
       activeTables: this.tables.size,

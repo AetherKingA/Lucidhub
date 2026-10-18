@@ -24,6 +24,8 @@ export interface CreateOptions {
   name: string;
   startTime: number;
   startingStack?: number;
+  /** "fair" (Fair Play, default) or "bully" (Full-on Bullying: table winners keep all their chips). */
+  chipMode?: string;
   levelMinutes?: number;
   /** A full blind structure (each level's blinds, ante and minutes). Overrides levelMinutes. */
   levels?: unknown;
@@ -88,6 +90,7 @@ export class TournamentManager {
       name: String(opts.name || "Tournament").slice(0, 60),
       startTime: clamp(opts.startTime, now, now + 365 * 86_400_000, now + 30 * 60_000),
       startingStack: clamp(opts.startingStack, 1000, 1_000_000, base.startingStack),
+      chipMode: opts.chipMode === "bully" ? "bully" : "fair",
       levels: opts.levels !== undefined ? cleanLevels(opts.levels) : defaultLevels(clamp(opts.levelMinutes, 1, 60, 10)),
       tableSize: TABLE_SIZE,
       // Snap to the nearest allowed cap (6, 36, 216, 1296) so the bracket collapses evenly.

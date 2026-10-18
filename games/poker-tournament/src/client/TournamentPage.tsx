@@ -137,12 +137,21 @@ function OverviewPanel({ t, now }: { t: TournamentSummary; now: number }) {
         </div>
       )}
       <div>
-        <div className="label">Every table starts</div>
+        <div className="label">{t.chipMode === "bully" ? "First table starts" : "Every table starts"}</div>
         <div className="big">
           {chips(t.startingStack)} <small>chips</small>
         </div>
         <div className="muted small">
           Blinds {chips(t.firstLevel.smallBlind)}/{chips(t.firstLevel.bigBlind)}, {t.firstLevel.minutes}-min levels
+        </div>
+      </div>
+      <div>
+        <div className="label">Between rounds</div>
+        <div className={`big mode-${t.chipMode}`}>{t.chipMode === "bully" ? "Full-on Bullying" : "Fair Play"}</div>
+        <div className="muted small">
+          {t.chipMode === "bully"
+            ? "Table winners keep every chip they won and bring it to their next table."
+            : "Everyone starts each new table with the same stack."}
         </div>
       </div>
     </div>
@@ -217,7 +226,9 @@ function StructureTab({ detail }: { detail: TournamentDetail }) {
   return (
     <>
       <p className="muted small">
-        Every table, in every round, starts at level 1 with fresh, equal stacks. {detail.levels[0]!.minutes}-minute levels
+        Every table, in every round, starts at level 1
+        {detail.summary.chipMode === "bully" ? ". Table winners bring all the chips they won (Full-on Bullying)." : " with fresh, equal stacks (Fair Play)."}{" "}
+        {detail.levels[0]!.minutes}-minute levels
         {detail.breakEveryLevels > 0 && detail.breakMinutes > 0 && ` · ${detail.breakMinutes}-minute break every ${detail.breakEveryLevels} levels`}
       </p>
       <table className="data">

@@ -331,3 +331,68 @@ describe("advancing and admin", () => {
     expect(t.meta.remaining).toBe(2);
   });
 });
+
+describe("chips between rounds", () => {
+  /** Plays a whole tournament; for every table that opens, records each player's stack and the table's total. */
+  function playOut(players: number, cfg: Partial<TournamentConfig>, seed: number) {
+    const t = makeTournament(players, { levels: defaultConfig().levels.map((l) => ({ ...l, minutes: 3 })), ...cfg });
+    const rnd = seeded(seed);
+    const opened = new Map<number, { round: number; stacks: number[]; total: number }>();
+    const record = () => {
+      for (const tb of t.tables.values()) {
+        if (opened.has(tb.id)) continue;
+        const stacks = tb.seats.filter(Boolean).map((s) => s!.chips);
+        opened.set(tb.id, { round: tb.round, stacks, total: stacks.reduce((a, b) => a + b, 0) });
+      }
+    };
+    let now = 0;
+    t.tick(now);
+    record();
+    for (let step = 0; step < 500_000 && t.meta.status === "running"; step++) {
+      for (const tb of t.tables.values()) {
+        const who = actor(tb);
+        if (who !== null) t.act(who, randomAction(tb, rnd), now);
+      }
+      now += 500;
+      t.tick(now);
+      record();
+    }
+    expect(t.meta.status).toBe("finished");
+    return { t, opened };
+  }
+
+  it("Fair Play: every table, in every round, starts everyone on the starting stack", () => {
+    const { t, opened } = playOut(36, { chipMode: "fair" }, 11);
+    expect(t.config.chipMode).toBe("fair");
+    const later = [...opened.values()].filter((o) => o.round > 1);
+    expect(later.length).toBeGreaterThan(0);
+    for (const o of opened.values()) expect(o.stacks.every((s) => s === STACK)).toBe(true);
+  });
+
+  it("Full-on Bullying: table winners bring every chip they won to the next table", () => {
+    // 40 players: round-1 tables of 6 and 5, so winners arrive with different stacks.
+    const { t, opened } = playOut(40, { chipMode: "bully" }, 12);
+    const firstRound = [...opened.values()].filter((o) => o.round === 1);
+    expect(firstRound.every((o) => o.stacks.every((s) => s === STACK))).toBe(true);
+
+    for (const node of t.meta.bracket.filter((n) => n.round > 1 && opened.has(n.id))) {
+      const o = opened.get(node.id)!;
+      // Each child table's whole total comes up with its winner…
+      const childTotals = node.children.map((c) => opened.get(c)?.total ?? 0).filter((x) => x > 0);
+      expect(o.stacks.slice().sort((a, b) => a - b)).toEqual(childTotals.slice().sort((a, b) => a - b));
+      // …so nobody at a later table is on the plain starting stack.
+      expect(o.stacks.every((s) => s > STACK)).toBe(true);
+    }
+    // Every chip in the tournament ends up at the final table.
+    const final = [...opened.values()].find((o) => o.round === t.meta.totalRounds)!;
+    expect(final.total).toBe(40 * STACK);
+  });
+
+  it("treats tournaments saved before the setting existed as Fair Play", () => {
+    const t = makeTournament(6);
+    delete t.meta.config.chipMode;
+    t.tick(0);
+    expect(firstTable(t).seats.filter(Boolean).every((s) => s!.chips === STACK)).toBe(true);
+    expect(t.summary(null).chipMode).toBe("fair");
+  });
+});

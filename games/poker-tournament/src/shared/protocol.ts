@@ -30,6 +30,8 @@ export interface TournamentSummary {
   remaining: number;
   maxPlayers: number;
   startingStack: number;
+  /** "fair": everyone starts each table with startingStack. "bully": table winners keep all their chips. */
+  chipMode: "fair" | "bully";
   /** Earliest round still being played (1-based). Before the start: 1. */
   round: number;
   /** Rounds in the bracket (projected from current registrations before the start). */

@@ -28,7 +28,16 @@ export interface TournamentConfig {
   timeBankRefillSeconds: number;
   /** Percent of the field that finishes in the money. */
   payoutPercent: number;
+  /**
+   * What table winners take to their next table.
+   * "fair" (Fair Play): everyone starts every table with the starting stack.
+   * "bully" (Full-on Bullying): winners keep every chip they won.
+   * Missing on tournaments saved before this setting existed, which played Fair Play.
+   */
+  chipMode?: ChipMode;
 }
+
+export type ChipMode = "fair" | "bully";
 
 export type TournamentStatus = "registering" | "running" | "finished" | "cancelled";
 
@@ -45,6 +54,8 @@ export interface Entrant {
   advancedTo: number | null;
   place: number | null;
   points: number;
+  /** Chips they won their last table with (used by Full-on Bullying when they sit at the next table). */
+  carryChips?: number;
 }
 
 /**

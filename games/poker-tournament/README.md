@@ -11,9 +11,12 @@ Sign in with a Discord account listed in LucidHub's `ADMIN_DISCORD_IDS`. You'll 
 You can also create and control tournaments from LucidHub's **Events** page.
 
 - **Format:** every tournament is a 6-max **shootout**. Each table plays until one player has all the
-  chips, and that winner advances. The winners of every six tables meet at a new table, where everyone
-  starts again with the same stack and the blinds back at level 1, so nobody can bully a new table
-  with chips won earlier. This repeats until the final table. Player caps are 6, 36, 216 or 1,296
+  chips, and that winner advances. The winners of every six tables meet at a new table with the blinds
+  back at level 1. This repeats until the final table.
+- **Chips between rounds** (set when creating the tournament):
+  - **Fair Play** (default): everyone starts each new table with the starting stack, so nobody can
+    bully a new table with chips won earlier.
+  - **Full-on Bullying**: table winners keep every chip they won and bring it to their next table. Player caps are 6, 36, 216 or 1,296
   (one to four rounds), so the bracket always collapses evenly. A group of six tables moves on as soon
   as all six are done; it doesn't wait for the rest of the round.
 - **Create:** click **+ New tournament** in the lobby and pick a start time, cap and structure. It

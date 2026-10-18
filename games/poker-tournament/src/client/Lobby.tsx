@@ -63,7 +63,15 @@ function TournamentCard({ t }: { t: TournamentSummary }) {
         </div>
         <div className="muted small">
           {new Date(t.startTime).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })} · 6-max shootout ·{" "}
-          {chips(t.startingStack)} chips every round
+          {t.chipMode === "bully" ? (
+            <>
+              {chips(t.startingStack)} chips · <b className="mode-bully">Full-on Bullying</b>
+            </>
+          ) : (
+            <>
+              {chips(t.startingStack)} chips every round · <b className="mode-fair">Fair Play</b>
+            </>
+          )}
         </div>
         <div className="tcard-stats">
           <span>
@@ -131,6 +139,7 @@ function CreateTournament() {
     name: "Friday Night Poker",
     start: toLocalInput(Date.now() + 30 * 60_000),
     startingStack: 10000,
+    chipMode: "fair",
     levelMinutes: 10,
     maxPlayers: 1296,
     breakEveryLevels: 6,
@@ -175,8 +184,8 @@ function CreateTournament() {
     <form className="card create" onSubmit={submit}>
       <h3>New tournament</h3>
       <p className="muted small">
-        6-max shootout: each table plays until one player has every chip, and the winners of six tables meet at a new table. Every
-        new table starts everyone with the same stack and the blinds back at level 1. Registration closes when it starts.
+        6-max shootout: each table plays until one player has every chip, and the winners of six tables meet at a new table with
+        the blinds back at level 1. Registration closes when it starts.
       </p>
       <div className="grid">
         <label className="wide">
@@ -188,6 +197,13 @@ function CreateTournament() {
           <input type="datetime-local" value={form.start} onChange={set("start")} required />
         </label>
         {num("startingStack", "Starting chips", 1000, 1_000_000)}
+        <label>
+          Chips between rounds
+          <select value={form.chipMode} onChange={set("chipMode")}>
+            <option value="fair">Fair Play — everyone starts each table equal</option>
+            <option value="bully">Full-on Bullying — winners keep all their chips</option>
+          </select>
+        </label>
         {num("levelMinutes", "Minutes per level", 1, 60)}
         <label>
           Max players

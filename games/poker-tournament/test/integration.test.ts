@@ -65,7 +65,7 @@ describe("signatures", () => {
     const info = res.json();
     expect(info).toMatchObject({ key: "poker", name: "Poker Night" });
     expect(info.fields.map((f: { name: string }) => f.name)).toEqual([
-      "name", "startTime", "maxPlayers", "startingStack", "levels", "breakEveryLevels",
+      "name", "startTime", "maxPlayers", "startingStack", "chipMode", "levels", "breakEveryLevels",
       "breakMinutes", "decisionSeconds", "timeBankSeconds", "payoutPercent",
     ]);
     expect(info.fields.find((f: { name: string }) => f.name === "maxPlayers").options.map((o: { value: number }) => o.value)).toEqual([6, 36, 216, 1296]);
