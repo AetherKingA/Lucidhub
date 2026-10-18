@@ -52,6 +52,8 @@ function inspect(w: Watcher, raw: string) {
   w.frames++;
   if (raw.includes('"deck"')) w.leaks.push(`frame mentions "deck": ${raw.slice(0, 200)}`);
   const msg = JSON.parse(raw) as ServerMessage;
+  // Chat is what people typed (someone may type "As"); the dealer's lines only name hands, never cards.
+  if (msg.type === "chat") return;
   if (msg.type !== "table") {
     // No other message type should ever carry a card.
     if (CARD.test(raw)) w.leaks.push(`${msg.type} message contains a card: ${raw.slice(0, 200)}`);

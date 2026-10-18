@@ -15,6 +15,8 @@ export interface Notifier {
   playerMoved(tournamentId: number, userId: number, tableId: number): void;
   playerAdvanced(tournamentId: number, userId: number, round: number, totalRounds: number): void;
   playerFinished(tournamentId: number, userId: number, place: number, points: number): void;
+  /** A hand ended at a table; lines describe who won, for the table chat. */
+  handComplete(tournamentId: number, tableId: number, lines: string[]): void;
 }
 
 /** Admin-facing options for creating a tournament. Everything else uses the defaults. */
@@ -194,6 +196,7 @@ export class TournamentManager {
         saveResult(tournamentId, userId, place, points);
         n.playerFinished(tournamentId, userId, place, points);
       },
+      handComplete: (tableId, lines) => n.handComplete(tournamentId, tableId, lines),
       tournamentFinished: () => {
         // Save first so the hub finds the final status and results when it calls back.
         this.flush();

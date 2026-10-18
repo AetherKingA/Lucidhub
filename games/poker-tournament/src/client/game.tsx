@@ -1,5 +1,5 @@
 import { type ReactNode, createContext, useContext, useEffect, useRef, useState } from "react";
-import type { ClientMessage, ServerMessage, TableView, TournamentSummary, UserInfo } from "../shared/protocol.ts";
+import type { ChatMessage, ClientMessage, ServerMessage, TableView, TournamentSummary, UserInfo } from "../shared/protocol.ts";
 import { navigate, useRoute } from "./router.ts";
 import { type SocketStatus, useSocket } from "./useSocket.ts";
 
@@ -15,6 +15,8 @@ interface Game {
   online: number;
   tournaments: TournamentSummary[];
   tables: Record<string, TableView>;
+  /** Recent chat per table, keyed like tables. */
+  chats: Record<string, ChatMessage[]>;
   send: (msg: ClientMessage) => void;
   /** Current time on the server's clock (corrects for a wrong PC clock). */
   serverNow: () => number;
@@ -39,6 +41,7 @@ export function GameProvider({ user, children }: { user: UserInfo; children: Rea
   const [online, setOnline] = useState(0);
   const [tournaments, setTournaments] = useState<TournamentSummary[]>([]);
   const [tables, setTables] = useState<Record<string, TableView>>({});
+  const [chats, setChats] = useState<Record<string, ChatMessage[]>>({});
   const [notices, setNotices] = useState<Notice[]>([]);
   const offset = useRef(0);
   const route = useRoute();
@@ -108,6 +111,11 @@ export function GameProvider({ user, children }: { user: UserInfo; children: Rea
       case "error":
         notify(msg.message, "error");
         break;
+      case "chat": {
+        const k = tableKey(msg.tournamentId, msg.tableId);
+        setChats((c) => ({ ...c, [k]: msg.replace ? msg.messages : [...(c[k] ?? []), ...msg.messages].slice(-120) }));
+        break;
+      }
     }
   });
 
@@ -117,6 +125,7 @@ export function GameProvider({ user, children }: { user: UserInfo; children: Rea
     online,
     tournaments,
     tables,
+    chats,
     send,
     serverNow: () => Date.now() + offset.current,
     notices,

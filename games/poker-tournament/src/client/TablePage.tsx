@@ -1,12 +1,19 @@
-import { useEffect, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 import type { Action, SeatView, TableView } from "../shared/protocol.ts";
+import { describeHand } from "../shared/handName.ts";
 import { PlayingCard } from "./Cards.tsx";
+import { TableChat } from "./Chat.tsx";
 import { chips, formatClock, tableKey, useGame, useServerNow } from "./game.tsx";
 
 export function TablePage({ tournamentId, tableId }: { tournamentId: number; tableId: number }) {
-  const { tables, send, tournaments, status } = useGame();
+  const { tables, chats, send, tournaments, status } = useGame();
   const view = tables[tableKey(tournamentId, tableId)];
   const summary = tournaments.find((t) => t.id === tournamentId);
+  const [sound, setSound] = usePref("poker:sound", true);
+  // On narrow screens the chat covers the table, so it starts closed there.
+  const [chatOpen, setChatOpen] = usePref("poker:chat", typeof innerWidth === "number" && innerWidth >= 1100);
+  const messages = chats[tableKey(tournamentId, tableId)] ?? [];
+  const unread = useUnread(messages.length, chatOpen);
 
   // Subscribe while this page is open (own table is subscribed automatically anyway).
   useEffect(() => {
@@ -17,35 +24,86 @@ export function TablePage({ tournamentId, tableId }: { tournamentId: number; tab
 
   const myTable = summary?.me?.tableId;
   return (
-    <main className="table-page">
-      <div className="table-head">
-        <a className="back" href={`#/t/${tournamentId}`}>
-          ← {summary?.name ?? "Tournament"}
-        </a>
-        <span className="muted">Table {tableId}</span>
-        {view && <LevelClock view={view} remaining={summary?.remaining ?? 0} />}
-        {myTable != null && myTable !== tableId && (
-          <a className="btn primary small-btn" href={`#/t/${tournamentId}/table/${myTable}`}>
-            Back to my table
+    <main className={`table-page ${chatOpen ? "chat-open" : ""}`}>
+      <div className="room" aria-hidden="true">
+        {FLOATING_SUITS.map((s, i) => (
+          <span key={i} className={`float-suit ${s === "♥" || s === "♦" ? "red" : ""}`} style={{ left: `${(i * 137) % 100}%`, animationDelay: `${-i * 3.7}s`, animationDuration: `${26 + (i % 5) * 6}s` }}>
+            {s}
+          </span>
+        ))}
+      </div>
+      <div className="table-main">
+        <div className="table-head">
+          <a className="back" href={`#/t/${tournamentId}`}>
+            ← {summary?.name ?? "Tournament"}
           </a>
+          <span className="table-name">Table {tableId}</span>
+          {view && <LevelClock view={view} remaining={summary?.remaining ?? 0} />}
+          <span className="head-tools">
+            {myTable != null && myTable !== tableId && (
+              <a className="btn primary small-btn" href={`#/t/${tournamentId}/table/${myTable}`}>
+                Back to my table
+              </a>
+            )}
+            <button className="icon-btn" onClick={() => setSound(!sound)} title={sound ? "Mute your-turn sound" : "Play a sound on your turn"}>
+              {sound ? "🔔" : "🔕"}
+            </button>
+            <button className="icon-btn chat-toggle" onClick={() => setChatOpen(!chatOpen)} title={chatOpen ? "Hide chat" : "Show chat"}>
+              💬{!chatOpen && unread > 0 && <span className="unread">{unread > 9 ? "9+" : unread}</span>}
+            </button>
+          </span>
+        </div>
+        {!view ? (
+          <div className="center muted table-empty">
+            {summary?.me?.place === 1
+              ? "🏆 You won the tournament!"
+              : summary?.me?.waiting
+                ? `You won this table! You'll move to your round ${summary.me.waiting.round} table when the rest of your group finishes (${summary.me.waiting.groupDone}/${summary.me.waiting.groupSize} tables done).`
+                : summary?.status === "finished" || summary?.status === "cancelled"
+                  ? "This tournament is over."
+                  : "This table has finished (or is loading)."}
+          </div>
+        ) : (
+          <Table view={view} sound={sound} />
         )}
       </div>
-      {!view ? (
-        <div className="center muted">
-          {summary?.me?.place === 1
-            ? "🏆 You won the tournament!"
-            : summary?.me?.waiting
-              ? `You won this table! You'll move to your round ${summary.me.waiting.round} table when the rest of your group finishes (${summary.me.waiting.groupDone}/${summary.me.waiting.groupSize} tables done).`
-              : summary?.status === "finished" || summary?.status === "cancelled"
-                ? "This tournament is over."
-                : "This table has finished (or is loading)."}
-        </div>
-      ) : (
-        <Table view={view} />
+      {chatOpen && (
+        <aside className="chat-panel">
+          <TableChat tournamentId={tournamentId} tableId={tableId} messages={messages} canSend={Boolean(view)} onClose={() => setChatOpen(false)} />
+        </aside>
       )}
     </main>
   );
+}
 
+const FLOATING_SUITS = ["♠", "♥", "♣", "♦", "♠", "♦", "♣", "♥", "♠", "♣"];
+
+/** A remembered on/off preference (sound, chat panel). */
+function usePref(key: string, fallback: boolean): [boolean, (v: boolean) => void] {
+  const [v, setV] = useState(() => {
+    try {
+      const s = localStorage.getItem(key);
+      return s === null ? fallback : s === "1";
+    } catch {
+      return fallback;
+    }
+  });
+  const set = (next: boolean) => {
+    setV(next);
+    try {
+      localStorage.setItem(key, next ? "1" : "0");
+    } catch {
+      /* private mode */
+    }
+  };
+  return [v, set];
+}
+
+/** Messages that arrived while the chat panel was closed. */
+function useUnread(count: number, open: boolean) {
+  const seen = useRef(count);
+  if (open) seen.current = count;
+  return Math.max(0, count - seen.current);
 }
 
 function LevelClock({ view, remaining }: { view: TableView; remaining: number }) {
@@ -53,11 +111,18 @@ function LevelClock({ view, remaining }: { view: TableView; remaining: number })
   const left = view.phaseEndsAt !== null ? view.phaseEndsAt - now : view.phaseRemainingMs;
   return (
     <span className="level-clock">
-      {view.round === view.totalRounds ? "Final table" : `Round ${view.round}/${view.totalRounds}`} ·{" "}
-      {view.phase === "break" ? "Break" : `Lvl ${view.levelIndex + 1}`} · {chips(view.level.smallBlind)}/{chips(view.level.bigBlind)}
-      {view.level.ante > 0 && ` (${chips(view.level.ante)})`}
-      {left !== null && <> · {formatClock(left)}</>}
-      <span className="muted"> · {remaining} left in tournament</span>
+      <span className="lc-pill">{view.round === view.totalRounds ? "Final table" : `Round ${view.round}/${view.totalRounds}`}</span>
+      <span className="lc-pill">
+        {view.phase === "break" ? "Break" : `Level ${view.levelIndex + 1}`} · <b>{chips(view.level.smallBlind)}/{chips(view.level.bigBlind)}</b>
+        {view.level.ante > 0 && ` · ante ${chips(view.level.ante)}`}
+        {left !== null && <> · {formatClock(left)}</>}
+      </span>
+      {view.nextLevel && view.phase !== "break" && (
+        <span className="lc-pill muted">
+          Next {chips(view.nextLevel.smallBlind)}/{chips(view.nextLevel.bigBlind)}
+        </span>
+      )}
+      <span className="lc-pill muted">{remaining} left</span>
     </span>
   );
 }
@@ -66,52 +131,92 @@ function LevelClock({ view, remaining }: { view: TableView; remaining: number })
 function seatPosition(i: number, n: number) {
   const angle = Math.PI / 2 + (i / n) * Math.PI * 2;
   return {
-    seat: { left: 50 + 44 * Math.cos(angle), top: 50 + 42 * Math.sin(angle) },
-    bet: { left: 50 + 27 * Math.cos(angle), top: 50 + 25 * Math.sin(angle) },
+    seat: { left: 50 + 45 * Math.cos(angle), top: 50 + 44 * Math.sin(angle) },
+    bet: { left: 50 + 29 * Math.cos(angle), top: 50 + 27 * Math.sin(angle) },
   };
 }
 
-function Table({ view }: { view: TableView }) {
+/** A short chime when it becomes your turn. */
+function useTurnSound(myTurn: boolean, enabled: boolean, handNo: number) {
+  const ctx = useRef<AudioContext | null>(null);
+  useEffect(() => {
+    if (!myTurn || !enabled) return;
+    try {
+      ctx.current ??= new AudioContext();
+      const ac = ctx.current;
+      const now = ac.currentTime;
+      for (const [i, freq] of [660, 880].entries()) {
+        const o = ac.createOscillator();
+        const g = ac.createGain();
+        o.type = "sine";
+        o.frequency.value = freq;
+        g.gain.setValueAtTime(0.0001, now + i * 0.12);
+        g.gain.exponentialRampToValueAtTime(0.12, now + i * 0.12 + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.12 + 0.25);
+        o.connect(g).connect(ac.destination);
+        o.start(now + i * 0.12);
+        o.stop(now + i * 0.12 + 0.3);
+      }
+    } catch {
+      /* no audio */
+    }
+  }, [myTurn, enabled, handNo]);
+}
+
+function Table({ view, sound }: { view: TableView; sound: boolean }) {
   const { send } = useGame();
   const n = view.tableSize;
   // Rotate so the viewer sits at the bottom.
   const rotation = view.mySeat ?? 0;
   const me = view.mySeat !== null ? view.seats[view.mySeat] : null;
+  const myTurn = Boolean(view.legal);
+  useTurnSound(myTurn, sound, view.handNo);
+  const totalPot = view.pot + view.seats.reduce((t, s) => t + (s?.bet ?? 0), 0);
+  const myHand = me && !me.folded ? describeHand(me.holeCards, view.board) : null;
 
   return (
     <>
       <div className="felt-wrap">
-        <div className="felt">
-          <div className="felt-center">
-            <div className="board">
-              {view.board.map((c, i) => (
-                <PlayingCard key={i} card={c} />
-              ))}
-            </div>
-            {view.pot > 0 && <div className="pot">Pot {chips(view.pot)}</div>}
-            {view.paused && <div className="table-banner">Tournament paused</div>}
-            {!view.paused && view.onBreak && !view.street && <div className="table-banner">On break</div>}
-            {!view.street && !view.onBreak && !view.paused && <div className="table-banner muted">Waiting for players…</div>}
-          </div>
-
-          {Array.from({ length: n }, (_, i) => {
-            const seatIdx = (i + rotation) % n;
-            const s = view.seats[seatIdx];
-            const pos = seatPosition(i, n);
-            return (
-              <div key={seatIdx}>
-                <div className="seat-slot" style={{ left: `${pos.seat.left}%`, top: `${pos.seat.top}%` }}>
-                  {s ? <Seat s={s} view={view} isMe={seatIdx === view.mySeat} /> : <div className="seat empty-seat">Empty</div>}
-                  {view.button === seatIdx && view.street && <span className="dealer">D</span>}
-                </div>
-                {s && s.bet > 0 && (
-                  <div className="bet" style={{ left: `${pos.bet.left}%`, top: `${pos.bet.top}%` }}>
-                    {chips(s.bet)}
-                  </div>
+        <div className="rail">
+          <div className="felt">
+            <div className="felt-center">
+              <div className="board">
+                {Array.from({ length: 5 }, (_, i) =>
+                  view.board[i] ? <PlayingCard key={`${view.handNo}-${view.board[i]}`} card={view.board[i]!} size="board" /> : <span key={i} className="card-slot" />,
                 )}
               </div>
-            );
-          })}
+              {totalPot > 0 && (
+                <div className="pot">
+                  <ChipStack amount={totalPot} />
+                  <span>Pot {chips(totalPot)}</span>
+                </div>
+              )}
+              {view.paused && <div className="table-banner">Tournament paused</div>}
+              {!view.paused && view.onBreak && !view.street && <div className="table-banner">On break ☕</div>}
+              {!view.street && !view.onBreak && !view.paused && <div className="table-banner muted">Waiting for players…</div>}
+              {view.street && !view.paused && <div className="hand-no">Hand #{view.handNo}</div>}
+            </div>
+
+            {Array.from({ length: n }, (_, i) => {
+              const seatIdx = (i + rotation) % n;
+              const s = view.seats[seatIdx];
+              const pos = seatPosition(i, n);
+              return (
+                <div key={seatIdx}>
+                  <div className="seat-slot" style={{ left: `${pos.seat.left}%`, top: `${pos.seat.top}%` }}>
+                    {s ? <Seat s={s} view={view} isMe={seatIdx === view.mySeat} handLabel={seatIdx === view.mySeat ? myHand : null} /> : <div className="seat empty-seat">Open seat</div>}
+                    {view.button === seatIdx && view.street && <span className="dealer-btn">D</span>}
+                  </div>
+                  {s && s.bet > 0 && (
+                    <div className="bet" style={{ left: `${pos.bet.left}%`, top: `${pos.bet.top}%` }}>
+                      <ChipStack amount={s.bet} />
+                      <span>{chips(s.bet)}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -123,34 +228,39 @@ function Table({ view }: { view: TableView }) {
           </button>
         </div>
       )}
-      {view.legal ? (
-        <ActionBar view={view} />
-      ) : (
-        me &&
-        !me.away && (
-          <div className="action-bar idle">
-            <button className="btn ghost" onClick={() => send({ type: "sitOut", tournamentId: view.tournamentId })}>
-              Sit out
-            </button>
-          </div>
-        )
-      )}
+      {me && !me.away && <ActionArea view={view} me={me} />}
     </>
   );
 }
 
-function Seat({ s, view, isMe }: { s: SeatView; view: TableView; isMe: boolean }) {
+/** A little stack of chips whose height grows with the amount. */
+function ChipStack({ amount }: { amount: number }) {
+  const count = Math.max(1, Math.min(6, Math.ceil(Math.log10(Math.max(10, amount)) - 0.5)));
+  const colors = ["#c8202a", "#1f6fd1", "#1f9d5a", "#222", "#7b3fbf", "#e3b341"];
+  return (
+    <span className="chip-stack" aria-hidden="true">
+      {Array.from({ length: count }, (_, i) => (
+        <span key={i} className="chip" style={{ bottom: i * 3, background: colors[(i + count) % colors.length] }} />
+      ))}
+    </span>
+  );
+}
+
+function Seat({ s, view, isMe, handLabel }: { s: SeatView; view: TableView; isMe: boolean; handLabel: string | null }) {
   const acting = view.toActSeat === s.seat && !view.handComplete;
   const winner = view.handComplete && s.won > 0;
   return (
     <div className={`seat ${acting ? "acting" : ""} ${s.folded ? "folded" : ""} ${winner ? "winner" : ""} ${isMe ? "me" : ""} ${s.away ? "away" : ""}`}>
       <div className="hole">
         {s.holeCards.map((c, i) => (
-          <PlayingCard key={i} card={c} small={!isMe} />
+          <PlayingCard key={`${view.handNo}-${i}-${c}`} card={c} size={isMe ? "mine" : "small"} />
         ))}
       </div>
       <div className="plate">
-        <img src={s.avatarUrl} alt="" width={30} height={30} />
+        <span className="avatar">
+          <img src={s.avatarUrl} alt="" width={44} height={44} />
+          {acting && <TurnRing view={view} />}
+        </span>
         <div className="plate-text">
           <div className="name">
             {!s.connected && <span title="Disconnected">⚠ </span>}
@@ -167,100 +277,233 @@ function Seat({ s, view, isMe }: { s: SeatView; view: TableView; isMe: boolean }
       ) : s.away ? (
         <div className="tag">Sitting out</div>
       ) : s.lastAction ? (
-        <div className="tag">{s.lastAction}</div>
+        <div className={`tag act-${s.lastAction.split(" ")[0]!.toLowerCase().replace("-", "")}`}>{s.lastAction}</div>
       ) : null}
-      {acting && <TurnTimer view={view} />}
+      {isMe && handLabel && !winner && <div className="tag mine">{handLabel}</div>}
     </div>
   );
 }
 
-function TurnTimer({ view }: { view: TableView }) {
+/** A ring around the acting player's avatar that drains as their time runs out (red in the time bank). */
+function TurnRing({ view }: { view: TableView }) {
   const now = useServerNow(100);
   if (view.actionStartedAt === null || view.actionDeadline === null) return null;
-  if (view.paused) return <div className="timer"><div className="timer-fill" style={{ width: "100%" }} /></div>;
   const normalEnd = view.actionStartedAt + view.decisionMs;
   const inBank = now > normalEnd;
-  const pct = inBank
-    ? ((view.actionDeadline - now) / Math.max(1, view.actionDeadline - normalEnd)) * 100
-    : ((normalEnd - now) / view.decisionMs) * 100;
+  const frac = view.paused
+    ? 1
+    : inBank
+      ? (view.actionDeadline - now) / Math.max(1, view.actionDeadline - normalEnd)
+      : (normalEnd - now) / view.decisionMs;
+  const f = Math.max(0, Math.min(1, frac));
+  const C = 2 * Math.PI * 25;
   return (
-    <div className={`timer ${inBank ? "bank" : ""}`} title={inBank ? "Using time bank" : undefined}>
-      <div className="timer-fill" style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+    <svg className={`turn-ring ${inBank ? "bank" : ""}`} viewBox="0 0 56 56" aria-hidden="true">
+      <circle cx="28" cy="28" r="25" className="track" />
+      <circle cx="28" cy="28" r="25" className="fill" strokeDasharray={C} strokeDashoffset={C * (1 - f)} />
+    </svg>
+  );
+}
+
+type PreAction = "checkFold" | "check" | "callAny" | null;
+
+/** Your controls: the big action buttons on your turn, otherwise pre-actions and sit out. */
+function ActionArea({ view, me }: { view: TableView; me: SeatView }) {
+  const { send } = useGame();
+  const [pre, setPre] = useState<PreAction>(null);
+  const fired = useRef("");
+  const decisionKey = `${view.handNo}:${view.street}:${view.currentBet}`;
+
+  // Pre-actions only last for the street they were picked on.
+  useEffect(() => setPre(null), [view.handNo, view.street]);
+
+  // When it becomes our turn, play the pre-action once.
+  useEffect(() => {
+    const legal = view.legal;
+    if (!legal || !pre || fired.current === decisionKey) return;
+    let action: Action | null = null;
+    if (pre === "checkFold") action = legal.canCheck ? { type: "check" } : { type: "fold" };
+    else if (pre === "check") action = legal.canCheck ? { type: "check" } : null;
+    else if (pre === "callAny") action = legal.canCheck ? { type: "check" } : { type: "call" };
+    setPre(null);
+    if (!action) return;
+    fired.current = decisionKey;
+    send({ type: "action", tournamentId: view.tournamentId, action });
+  }, [view.legal, pre, decisionKey]);
+
+  if (view.legal && !pre) return <ActionBar view={view} me={me} />;
+
+  const inHand = me.inHand && !me.folded && !me.allIn && view.street && !view.handComplete;
+  const toggle = (p: PreAction) => setPre(pre === p ? null : p);
+  const facingBet = view.currentBet > me.bet;
+  return (
+    <div className="action-bar idle">
+      {inHand ? (
+        <div className="pre-actions">
+          <span className="muted small">When it's your turn:</span>
+          <button className={`pre ${pre === "checkFold" ? "on" : ""}`} onClick={() => toggle("checkFold")}>
+            {facingBet ? "Fold" : "Check / Fold"}
+          </button>
+          {!facingBet && (
+            <button className={`pre ${pre === "check" ? "on" : ""}`} onClick={() => toggle("check")}>
+              Check
+            </button>
+          )}
+          <button className={`pre ${pre === "callAny" ? "on" : ""}`} onClick={() => toggle("callAny")}>
+            {facingBet ? `Call ${chips(Math.min(view.currentBet - me.bet, me.chips))}` : "Call any"}
+          </button>
+        </div>
+      ) : (
+        <span className="muted small">{me.folded ? "You folded — next hand soon." : view.handComplete ? "Next hand coming up…" : ""}</span>
+      )}
+      <button className="btn ghost sit-out" onClick={() => send({ type: "sitOut", tournamentId: view.tournamentId })}>
+        Sit out
+      </button>
     </div>
   );
 }
 
-function ActionBar({ view }: { view: TableView }) {
+function ActionBar({ view, me }: { view: TableView; me: SeatView }) {
   const { send } = useGame();
   const legal = view.legal!;
-  const me = view.seats[view.mySeat!]!;
   const totalPot = view.pot + view.seats.reduce((n, s) => n + (s?.bet ?? 0), 0);
   const toCall = Math.max(0, view.currentBet - me.bet);
-  const clamp = (v: number) => Math.round(Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo, v)));
+  const step = Math.max(1, Math.floor(view.level.bigBlind / 2));
+  // Round to the slider's step (from the minimum), but always allow exactly the minimum and all-in.
+  const clamp = (v: number) =>
+    Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo, legal.minRaiseTo + Math.round((v - legal.minRaiseTo) / step) * step));
   const [raiseTo, setRaiseTo] = useState(legal.minRaiseTo);
 
   // Reset the raise amount each new decision.
   useEffect(() => setRaiseTo(legal.minRaiseTo), [legal.minRaiseTo, legal.maxRaiseTo, view.handNo]);
 
-  const act = (action: Action) =>
-    send({ type: "action", tournamentId: view.tournamentId, action });
+  const act = (action: Action) => send({ type: "action", tournamentId: view.tournamentId, action });
+  const canSize = legal.canRaise && legal.maxRaiseTo > legal.minRaiseTo;
+  const isBet = view.currentBet === 0;
+  const raiseLabel = raiseTo === legal.maxRaiseTo ? "All-in" : isBet ? "Bet" : "Raise to";
+  const call = () => act(legal.canCheck ? { type: "check" } : { type: "call" });
+  const raise = () => act({ type: "raise", to: clamp(raiseTo) });
+
+  // Keyboard: F fold, C check/call, R bet/raise, ↑/↓ size the bet. Not while typing in chat.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA") && !(el as HTMLInputElement).classList.contains("bet-range")) return;
+      const k = e.key.toLowerCase();
+      if (k === "f") act({ type: "fold" });
+      else if (k === "c") call();
+      else if (k === "r" && legal.canRaise) raise();
+      else if ((k === "arrowup" || k === "arrowright") && canSize) setRaiseTo((v) => clamp(v + step));
+      else if ((k === "arrowdown" || k === "arrowleft") && canSize) setRaiseTo((v) => clamp(v - step));
+      else return;
+      e.preventDefault();
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
+  });
 
   const presets: [string, number][] = [
     ["Min", legal.minRaiseTo],
     ["½ Pot", clamp(view.currentBet + (totalPot + toCall) / 2)],
+    ["¾ Pot", clamp(view.currentBet + ((totalPot + toCall) * 3) / 4)],
     ["Pot", clamp(view.currentBet + totalPot + toCall)],
     ["All-in", legal.maxRaiseTo],
   ];
-  const isBet = view.currentBet === 0;
-  const raiseLabel = raiseTo === legal.maxRaiseTo ? "All-in" : isBet ? "Bet" : "Raise to";
 
   return (
-    <div className="action-bar">
+    <div className="action-bar my-turn">
+      {canSize && (
+        <BetSlider
+          value={raiseTo}
+          min={legal.minRaiseTo}
+          max={legal.maxRaiseTo}
+          step={step}
+          presets={presets}
+          onChange={(v) => setRaiseTo(clamp(v))}
+          label={isBet ? "Bet" : "Raise to"}
+        />
+      )}
       <div className="actions">
         <button className="btn act fold" onClick={() => act({ type: "fold" })}>
-          Fold
+          Fold <kbd>F</kbd>
         </button>
-        {legal.canCheck ? (
-          <button className="btn act call" onClick={() => act({ type: "check" })}>
-            Check
-          </button>
-        ) : (
-          <button className="btn act call" onClick={() => act({ type: "call" })}>
-            {legal.callAmount >= me.chips ? "Call all-in" : "Call"} {chips(legal.callAmount)}
-          </button>
-        )}
+        <button className="btn act call" onClick={call}>
+          {legal.canCheck ? "Check" : `${legal.callAmount >= me.chips ? "Call all-in" : "Call"} ${chips(legal.callAmount)}`} <kbd>C</kbd>
+        </button>
         {legal.canRaise && (
-          <button className="btn act raise" onClick={() => act({ type: "raise", to: clamp(raiseTo) })}>
-            {raiseLabel} {chips(raiseTo)}
+          <button className="btn act raise" onClick={raise}>
+            {raiseLabel} {chips(clamp(raiseTo))} <kbd>R</kbd>
           </button>
         )}
       </div>
-      {legal.canRaise && legal.maxRaiseTo > legal.minRaiseTo && (
-        <div className="sizing">
-          {presets.map(([label, v]) => (
-            <button key={label} className="btn ghost preset" onClick={() => setRaiseTo(v)}>
-              {label}
-            </button>
-          ))}
+    </div>
+  );
+}
+
+/** Chip-style slider with pot-size presets and fine +/- steps. */
+function BetSlider(p: {
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  presets: [string, number][];
+  onChange: (v: number) => void;
+  label: string;
+}) {
+  const [typed, setTyped] = useState<string | null>(null);
+  const pct = ((p.value - p.min) / Math.max(1, p.max - p.min)) * 100;
+  return (
+    <div className="bet-slider">
+      <div className="presets">
+        {p.presets.map(([label, v]) => (
+          <button key={label} className={`preset ${p.value === v ? "on" : ""}`} onClick={() => p.onChange(v)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="slider-row">
+        <button className="step" onClick={() => p.onChange(p.value - p.step)} aria-label="Less">
+          −
+        </button>
+        <div className="range-wrap" style={{ "--pct": `${pct}%` } as CSSProperties}>
           <input
+            className="bet-range"
             type="range"
-            min={legal.minRaiseTo}
-            max={legal.maxRaiseTo}
-            step={Math.max(1, Math.floor(view.level.bigBlind / 2))}
-            value={raiseTo}
-            onChange={(e) => setRaiseTo(clamp(Number(e.target.value)))}
+            min={p.min}
+            max={p.max}
+            step={p.step}
+            value={p.value}
+            onChange={(e) => p.onChange(Number(e.target.value))}
+            aria-label={`${p.label} amount`}
           />
-          <input
-            type="number"
-            className="amount"
-            min={legal.minRaiseTo}
-            max={legal.maxRaiseTo}
-            value={raiseTo}
-            onChange={(e) => setRaiseTo(Number(e.target.value))}
-            onBlur={() => setRaiseTo(clamp(raiseTo))}
-          />
+          <div className="range-labels">
+            <span>{chips(p.min)}</span>
+            <span>{chips(p.max)}</span>
+          </div>
         </div>
-      )}
+        <button className="step" onClick={() => p.onChange(p.value + p.step)} aria-label="More">
+          +
+        </button>
+        <label className="amount-box">
+          <span>{p.label}</span>
+          <input
+            inputMode="numeric"
+            value={typed ?? chips(p.value)}
+            onFocus={(e) => {
+              setTyped(String(p.value));
+              e.currentTarget.select();
+            }}
+            onChange={(e) => setTyped(e.target.value.replace(/[^0-9]/g, ""))}
+            onBlur={() => {
+              if (typed) p.onChange(Number(typed));
+              setTyped(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+        </label>
+      </div>
     </div>
   );
 }

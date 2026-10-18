@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
-import type { Action, ClientMessage, ServerMessage } from "../shared/protocol.ts";
+import type { Action, ChatMessage, ClientMessage, ServerMessage } from "../shared/protocol.ts";
 import { type PublicUser, publicUser, userFromRequest } from "./auth.ts";
+import { ChatError, TableChats } from "./chat.ts";
 import { recordIp } from "./db.ts";
 import type { Notifier, TournamentManager } from "./tournament/manager.ts";
 import { TournamentError } from "./tournament/tournament.ts";
@@ -35,8 +36,16 @@ export class Realtime implements Notifier {
   private flushQueued = false;
   private lobbyTimer: ReturnType<typeof setTimeout> | null = null;
   private lastLobby = 0;
+  readonly chats = new TableChats();
 
   // ------------------------------------------------------------ Notifier
+
+  handComplete(tournamentId: number, tableId: number, lines: string[]) {
+    const k = key(tournamentId, tableId);
+    const now = Date.now();
+    const messages = lines.map((l) => this.chats.dealer(k, l, now));
+    if (messages.length) this.sendChat(k, tournamentId, tableId, messages);
+  }
 
   isConnected(userId: number) {
     return (this.byUser.get(userId)?.size ?? 0) > 0;
@@ -59,6 +68,7 @@ export class Realtime implements Notifier {
     }
     this.watchers.delete(k);
     this.dirtyTables.delete(k);
+    this.chats.drop(k);
   }
 
   lobbyChanged() {
@@ -209,9 +219,19 @@ export class Realtime implements Notifier {
         case "sitOut":
           t.setAway(userId, true);
           break;
+        case "chat": {
+          // Only at a table you're sitting at or watching.
+          const tableId = Number(msg.tableId);
+          const k = key(t.id, tableId);
+          if (!client.subs.has(k) || !t.tables.has(tableId)) throw new TournamentError("Open the table to chat there");
+          const seated = t.locate(userId)?.table.id === tableId;
+          const m = this.chats.say(k, { ...client.user, userId, seated }, msg.text, now);
+          this.sendChat(k, t.id, tableId, [m]);
+          break;
+        }
       }
     } catch (err) {
-      if (err instanceof TournamentError) this.send(client, { type: "error", message: err.message });
+      if (err instanceof TournamentError || err instanceof ChatError) this.send(client, { type: "error", message: err.message });
       else {
         console.error("[ws] Error handling message:", err);
         this.send(client, { type: "error", message: "Something went wrong" });
@@ -222,9 +242,20 @@ export class Realtime implements Notifier {
   // ------------------------------------------------------------ sending
 
   private subscribe(c: Client, k: string) {
+    const isNew = !c.subs.has(k);
     c.subs.add(k);
     if (!this.watchers.has(k)) this.watchers.set(k, new Set());
     this.watchers.get(k)!.add(c);
+    // Catch up on the table's recent chat.
+    if (isNew) {
+      const [tournamentId, tableId] = k.split(":").map(Number) as [number, number];
+      this.send(c, { type: "chat", tournamentId, tableId, messages: this.chats.history(k), replace: true });
+    }
+  }
+
+  private sendChat(k: string, tournamentId: number, tableId: number, messages: ChatMessage[]) {
+    const data = JSON.stringify({ type: "chat", tournamentId, tableId, messages, replace: false } satisfies ServerMessage);
+    for (const c of this.watchers.get(k) ?? []) this.sendRaw(c, data);
   }
 
   private unsubscribe(c: Client, k: string) {

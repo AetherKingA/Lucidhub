@@ -118,6 +118,18 @@ export interface TournamentDetail {
   standings: { userId: number; username: string; round: number; chips: number; place: number | null; points: number; tableId: number | null }[];
 }
 
+export interface ChatMessage {
+  id: number;
+  /** player = seated at this table, spectator = watching, dealer = hand results and table news. */
+  kind: "player" | "spectator" | "dealer";
+  userId: number | null;
+  username: string;
+  avatarUrl: string | null;
+  admin: boolean;
+  text: string;
+  at: number;
+}
+
 export type ServerMessage =
   | { type: "hello"; user: UserInfo; online: number; serverNow: number }
   | { type: "online"; count: number }
@@ -128,7 +140,9 @@ export type ServerMessage =
   | { type: "tableClosed"; tournamentId: number; tableId: number }
   | { type: "moved"; tournamentId: number; tableId: number }
   | { type: "finished"; tournamentId: number; place: number; points: number }
-  | { type: "advanced"; tournamentId: number; round: number; totalRounds: number };
+  | { type: "advanced"; tournamentId: number; round: number; totalRounds: number }
+  /** replace: the table's whole recent history (sent when you start watching); otherwise new messages. */
+  | { type: "chat"; tournamentId: number; tableId: number; messages: ChatMessage[]; replace: boolean };
 
 export type ClientMessage =
   | { type: "ping"; t: number }
@@ -138,4 +152,6 @@ export type ClientMessage =
   | { type: "watch"; tournamentId: number; tableId: number | null }
   | { type: "action"; tournamentId: number; action: Action }
   | { type: "back"; tournamentId: number }
-  | { type: "sitOut"; tournamentId: number };
+  | { type: "sitOut"; tournamentId: number }
+  /** Say something at a table you're seated at or watching. */
+  | { type: "chat"; tournamentId: number; tableId: number; text: string };

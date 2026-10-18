@@ -28,6 +28,8 @@ export interface TournamentHooks {
   playerFinished(userId: number, place: number, points: number): void;
   /** The tournament produced its champion (not called on cancel). */
   tournamentFinished(): void;
+  /** A hand just ended: who won what, as lines for the table chat. */
+  handComplete(tableId: number, lines: string[]): void;
   /** Something needs saving: the meta row, or a table row (deleted = remove it). */
   dirty(what: "meta" | { tableId: number; deleted?: boolean }): void;
 }
@@ -42,6 +44,7 @@ export const noopHooks: TournamentHooks = {
   playerAdvanced: noop,
   playerFinished: noop,
   tournamentFinished: noop,
+  handComplete: noop,
   dirty: noop,
 };
 
@@ -337,10 +340,23 @@ export class Tournament {
     if (h.street === "complete") {
       t.actionStartedAt = null;
       t.handDoneAt = now + (h.result!.showdown.length ? SHOWDOWN_MS : UNCONTESTED_MS);
+      this.hooks.handComplete(t.id, this.handSummary(t));
     } else {
       t.actionStartedAt = now;
     }
     this.touchTable(t);
+  }
+
+  /** "Bot 3 wins 1,250 with Two Pair" for each winner of the hand that just ended. */
+  handSummary(t: TableState): string[] {
+    const r = t.hand?.result;
+    if (!r) return [];
+    const name = (pid: string) => this.meta.entrants[pid]?.username ?? "Someone";
+    const shown = new Map(r.showdown.map((s) => [s.playerId, s.handName]));
+    return Object.entries(r.payouts)
+      .filter(([, amount]) => amount > 0)
+      .sort((a, b) => b[1] - a[1])
+      .map(([pid, amount]) => `Hand #${t.handNo}: ${name(pid)} wins ${amount.toLocaleString("en-US")}${shown.get(pid) ? ` with ${shown.get(pid)}` : ""}`);
   }
 
   private startNextHand(t: TableState, now: number) {

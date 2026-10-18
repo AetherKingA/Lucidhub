@@ -25,6 +25,7 @@ const notifier = {
   playerMoved: () => {},
   playerAdvanced: () => {},
   playerFinished: () => {},
+  handComplete: () => {},
 };
 const manager = new TournamentManager(notifier);
 const app = Fastify();
