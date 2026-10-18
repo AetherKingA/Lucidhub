@@ -65,7 +65,7 @@ describe("signatures", () => {
     const info = res.json();
     expect(info).toMatchObject({ key: "poker", name: "Poker Night" });
     expect(info.fields.map((f: { name: string }) => f.name)).toEqual([
-      "name", "startTime", "maxPlayers", "startingStack", "levelMinutes", "breakEveryLevels",
+      "name", "startTime", "maxPlayers", "startingStack", "levels", "breakEveryLevels",
       "breakMinutes", "decisionSeconds", "timeBankSeconds", "payoutPercent",
     ]);
     expect(info.fields.find((f: { name: string }) => f.name === "maxPlayers").options.map((o: { value: number }) => o.value)).toEqual([6, 36, 216, 1296]);
@@ -196,5 +196,29 @@ describe("shutdown", () => {
     expect(res.statusCode).toBe(200);
     await new Promise((r) => setImmediate(r));
     expect(onShutdown).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("blind structures from the hub", () => {
+  it("offers a blind editor with presets in the create form", async () => {
+    const info = (await hub("GET", "/api/integration/info")).json();
+    const blinds = info.fields.find((f: { name: string }) => f.name === "levels");
+    expect(blinds.type).toBe("blinds");
+    expect(blinds.presets.map((p: { name: string }) => p.name)).toEqual(["Standard", "Turbo", "Hyper Turbo", "Deep Stack", "Casual Evening"]);
+  });
+
+  it("uses a custom structure, and explains what's wrong with a bad one", async () => {
+    const levels = [
+      { smallBlind: 10, bigBlind: 20, ante: 0, minutes: 7 },
+      { smallBlind: 20, bigBlind: 40, ante: 5, minutes: 7 },
+      { smallBlind: 50, bigBlind: 100, ante: 10, minutes: 4 },
+    ];
+    const ok = await hub("POST", "/api/integration/events", { name: "Custom", startTime: Date.now() + 3_600_000, maxPlayers: 6, levels });
+    expect(ok.statusCode).toBe(200);
+    expect(manager.get(Number(ok.json().id))!.config.levels).toEqual(levels);
+
+    const bad = await hub("POST", "/api/integration/events", { name: "Bad", levels: [levels[1], levels[0]] });
+    expect(bad.statusCode).toBe(400);
+    expect(bad.json().error).toMatch(/Level 2: blinds can't go down/);
   });
 });

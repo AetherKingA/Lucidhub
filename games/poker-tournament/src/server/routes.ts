@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { publicUser, userFromRequest } from "./auth.ts";
 import type { CreateOptions, TournamentManager } from "./tournament/manager.ts";
+import { StructureError } from "./tournament/structure.ts";
 import { type Tournament, TournamentError } from "./tournament/tournament.ts";
 
 function requireAdmin(req: FastifyRequest, reply: FastifyReply) {
@@ -48,8 +49,12 @@ export function registerTournamentRoutes(app: FastifyInstance, manager: Tourname
 
   app.post<{ Body: CreateOptions }>("/api/admin/tournaments", async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
-    const t = manager.create(req.body ?? ({} as CreateOptions), Date.now());
-    return t.summary(null);
+    try {
+      return manager.create(req.body ?? ({} as CreateOptions), Date.now()).summary(null);
+    } catch (err) {
+      if (err instanceof StructureError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
   });
 
   app.post<{ Params: { id: string; op: string }; Body: { userId?: number } }>(

@@ -215,3 +215,43 @@ label.check input { width: auto; accent-color: var(--accent-text); }
 
 .inline-select { width: auto; margin-left: 8px; padding: 3px 8px; font-size: 13px; }
 .setup-box > .launch { margin-top: 0; padding-top: 0; border-top: 0; }
+
+/* ---------- blind structure editor ---------- */
+.blinds { display: flex; flex-direction: column; gap: 14px; }
+.preset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.preset-card {
+  position: relative; display: flex; flex-direction: column; gap: 4px; text-align: left; cursor: pointer;
+  padding: 12px 14px; border-radius: 12px; background: var(--bg); border: 1px solid var(--border); color: var(--text); font: inherit;
+}
+.preset-card:hover { border-color: var(--accent-dim); }
+.preset-card.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--bg)); box-shadow: 0 0 0 1px var(--accent) inset; }
+.pc-head { display: flex; gap: 8px; align-items: center; }
+.pc-head strong { font-family: var(--font-display); font-size: 15px; }
+.pc-desc { font-size: 12.5px; color: var(--muted); line-height: 1.4; }
+.pc-meta { font-size: 12px; color: var(--accent-text); margin-top: auto; }
+.pc-delete { position: absolute; top: 8px; right: 10px; color: var(--muted); font-size: 12px; padding: 2px 4px; border-radius: 4px; }
+.pc-delete:hover { color: var(--bad); background: #ffffff0f; }
+.blind-quick { display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: flex-end; }
+.blind-quick label { display: flex; flex-direction: column; gap: 5px; }
+.blind-quick label > span:first-child { font-size: 12.5px; color: var(--muted); }
+.with-unit { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.with-unit input { width: 90px; }
+.blind-quick select { width: auto; }
+.blind-summary { display: flex; flex-direction: column; gap: 2px; font-size: 13px; margin-left: auto; text-align: right; }
+.blind-summary b { color: var(--accent-text); }
+.blind-chart { width: 100%; height: 64px; display: block; }
+.blind-chart rect { fill: color-mix(in srgb, var(--accent) 55%, transparent); }
+.blind-chart rect.ante { fill: var(--accent); }
+.blind-chart rect:hover { fill: #fff; }
+.level-table { display: flex; flex-direction: column; gap: 4px; max-height: 420px; overflow-y: auto; padding-right: 4px; }
+.lt-head, .lt-row { display: grid; grid-template-columns: 52px repeat(4, minmax(70px, 1fr)) 32px; gap: 8px; align-items: center; }
+.lt-head { font-size: 12px; color: var(--muted); position: sticky; top: 0; background: var(--surface); padding: 4px 0; z-index: 1; }
+.lt-row input { padding: 6px 8px; }
+.lt-n { color: var(--muted); font-variant-numeric: tabular-nums; text-align: center; }
+.lt-row.bad-row input { border-color: var(--bad); }
+.level-table > .row { margin-top: 6px; }
+@media (max-width: 760px) {
+  .blind-summary { margin-left: 0; text-align: left; }
+  .lt-head, .lt-row { grid-template-columns: 30px repeat(4, minmax(48px, 1fr)) 24px; gap: 4px; }
+}
+.lt-remove { text-decoration: none; font-size: 15px; justify-self: center; }

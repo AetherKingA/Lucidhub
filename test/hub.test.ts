@@ -325,4 +325,30 @@ describe("HTTP API", () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toMatch(/name/);
   });
+
+  it("saves, replaces and deletes your blind presets per game", async () => {
+    const admin = startSession({ discordId: "100", username: "Admin", avatar: null });
+    const game = addGame({ key: `blinds${uid()}`, name: "Blinds", baseUrl: "http://127.0.0.1:1" });
+    const call = (method: "GET" | "POST" | "DELETE", url: string, payload?: object) =>
+      app.inject({ method, url, cookies: { hub_sid: admin.token }, ...(payload ? { payload } : {}) });
+    const levels = [
+      { smallBlind: 10, bigBlind: 20, ante: 0, minutes: 6 },
+      { smallBlind: 20, bigBlind: 40, ante: 4, minutes: 6 },
+    ];
+    const saved = await call("POST", `/api/games/${game.id}/blind-presets`, { name: "Friday Turbo", levels, set: { startingStack: 8000, "bad key!": 1 } });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json()).toMatchObject({ name: "Friday Turbo", levels, set: { startingStack: 8000 }, saved: true });
+
+    // Same name again replaces it rather than adding a second.
+    await call("POST", `/api/games/${game.id}/blind-presets`, { name: "Friday Turbo", levels: [levels[0]] });
+    const list = (await call("GET", `/api/games/${game.id}/blind-presets`)).json();
+    expect(list).toHaveLength(1);
+    expect(list[0].levels).toHaveLength(1);
+
+    expect((await call("POST", `/api/games/${game.id}/blind-presets`, { name: "", levels })).statusCode).toBe(400);
+    expect((await call("POST", `/api/games/${game.id}/blind-presets`, { name: "x", levels: [] })).statusCode).toBe(400);
+
+    await call("DELETE", `/api/blind-presets/${list[0].id.replace("saved-", "")}`);
+    expect((await call("GET", `/api/games/${game.id}/blind-presets`)).json()).toEqual([]);
+  });
 });

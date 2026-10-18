@@ -9,9 +9,9 @@ import { config } from "./config.ts";
 import { runAdminOp } from "./routes.ts";
 import type { CreateOptions, TournamentManager } from "./tournament/manager.ts";
 import { loadEndedMetas, loadMeta, loadResults } from "./tournament/store.ts";
-import { PLAYER_CAPS, defaultConfig } from "./tournament/structure.ts";
+import { BLIND_PRESETS, type BlindPreset, PLAYER_CAPS, StructureError, defaultConfig } from "./tournament/structure.ts";
 import { TournamentError } from "./tournament/tournament.ts";
-import type { TournamentMeta, TournamentStatus } from "./tournament/types.ts";
+import type { Level, TournamentMeta, TournamentStatus } from "./tournament/types.ts";
 
 const GAME_KEY = "poker";
 const MAX_SKEW_MS = 5 * 60_000;
@@ -22,11 +22,14 @@ const OPS = new Set(["start", "pause", "resume", "cancel"]);
 export interface EventField {
   name: string;
   label: string;
-  type: "text" | "number" | "datetime" | "select";
-  default?: string | number;
+  /** "blinds": a blind structure editor; its value is a list of levels. */
+  type: "text" | "number" | "datetime" | "select" | "blinds";
+  default?: string | number | Level[];
   min?: number;
   max?: number;
   options?: { value: string | number; label: string }[];
+  /** For "blinds": ready-made structures, which may also set other fields (stack, breaks). */
+  presets?: BlindPreset[];
   help?: string;
 }
 
@@ -69,7 +72,14 @@ function fields(): EventField[] {
       help: "6-max shootout: each cap collapses evenly to one final table.",
     },
     { name: "startingStack", label: "Starting stack", type: "number", default: d.startingStack, min: 1000, max: 1_000_000 },
-    { name: "levelMinutes", label: "Level length (minutes)", type: "number", default: d.levels[0]!.minutes, min: 1, max: 60 },
+    {
+      name: "levels",
+      label: "Blind structure",
+      type: "blinds",
+      default: d.levels,
+      presets: BLIND_PRESETS,
+      help: "How big the blinds get at each level, and how long each level lasts. Every table starts again at level 1.",
+    },
     { name: "breakEveryLevels", label: "Break every N levels", type: "number", default: d.breakEveryLevels, min: 0, max: 30, help: "0 disables breaks." },
     { name: "breakMinutes", label: "Break length (minutes)", type: "number", default: d.breakMinutes, min: 0, max: 60 },
     { name: "decisionSeconds", label: "Decision time (seconds)", type: "number", default: d.decisionSeconds, min: 5, max: 120 },
@@ -131,8 +141,14 @@ export function registerIntegrationRoutes(app: FastifyInstance, manager: Tournam
       return { ok: true };
     });
 
-    scope.post<{ Body: CreateOptions | undefined }>("/api/integration/events", async (req) => {
-      const t = manager.create(req.body ?? ({} as CreateOptions), Date.now());
+    scope.post<{ Body: CreateOptions | undefined }>("/api/integration/events", async (req, reply) => {
+      let t;
+      try {
+        t = manager.create(req.body ?? ({} as CreateOptions), Date.now());
+      } catch (err) {
+        if (err instanceof StructureError) return reply.code(400).send({ error: err.message });
+        throw err;
+      }
       console.log(`[hub] Created "${t.config.name}"`);
       return toSummary(t.meta);
     });

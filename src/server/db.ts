@@ -85,6 +85,16 @@ db.exec(`
     rules_json  TEXT NOT NULL
   );
 
+  -- Blind structures you saved for a game (on top of the presets the game ships with).
+  CREATE TABLE IF NOT EXISTS blind_presets (
+    id           INTEGER PRIMARY KEY,
+    game_key     TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    levels_json  TEXT NOT NULL,
+    set_json     TEXT NOT NULL,
+    created_at   INTEGER NOT NULL
+  );
+
   -- One prize for one winner. The unique key makes awarding an event twice a no-op.
   CREATE TABLE IF NOT EXISTS awards (
     id               INTEGER PRIMARY KEY,

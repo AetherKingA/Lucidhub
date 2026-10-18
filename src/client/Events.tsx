@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import type { Award, GameField, GameInfo, GameOp, HubEvent, PrizeRule } from "../shared/protocol.ts";
+import type { Award, BlindLevel, GameField, GameInfo, GameOp, HubEvent, PrizeRule } from "../shared/protocol.ts";
 import { api, fmtAgo, fmtTime, ordinal, placeLabel, useApi } from "./api.ts";
+import { BlindEditor, levelProblems } from "./Blinds.tsx";
 import { navigate } from "./router.ts";
 import { AwardStatusPill, ChannelPicker, Empty, EventStatus, LadderEditor, PageHeader, useAction, useHub } from "./ui.tsx";
 
@@ -101,7 +102,8 @@ function initialValues(fields: GameField[]) {
       const start = new Date(Date.now() + 60 * 60_000);
       start.setMinutes(0, 0, 0);
       out[f.name] = toLocalInput(typeof f.default === "number" && f.default > Date.now() ? f.default : start.getTime());
-    } else out[f.name] = f.default !== undefined ? String(f.default) : "";
+    } else if (f.type === "blinds") continue; // kept as levels, not text
+    else out[f.name] = f.default !== undefined ? String(f.default) : "";
   }
   return out;
 }
@@ -113,6 +115,7 @@ export function NewEventPage() {
   const [info, setInfo] = useState<GameInfo | null>(null);
   const [infoError, setInfoError] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
+  const [blinds, setBlinds] = useState<Record<string, BlindLevel[]>>({});
   const [rules, setRules] = useState<PrizeRule[]>([]);
   const [channel, setChannel] = useState("");
   const { busy, run } = useAction();
@@ -129,6 +132,9 @@ export function NewEventPage() {
       .then((i) => {
         setInfo(i);
         setValues(initialValues(i.fields));
+        setBlinds(
+          Object.fromEntries(i.fields.filter((f) => f.type === "blinds").map((f) => [f.name, Array.isArray(f.default) ? f.default.map((l) => ({ ...l })) : []])),
+        );
       })
       .catch((err) => setInfoError((err as Error).message));
   }, [gameId]);
@@ -144,11 +150,20 @@ export function NewEventPage() {
       </>
     );
 
+  const blindFields = info?.fields.filter((f) => f.type === "blinds") ?? [];
+
   const submit = () =>
     run(async () => {
       if (rules.some((r) => !r.prizeId)) throw new Error("Pick a prize on every row of the prize ladder");
       const options: Record<string, unknown> = {};
       for (const f of info!.fields) {
+        if (f.type === "blinds") {
+          const levels = blinds[f.name] ?? [];
+          const bad = levelProblems(levels).findIndex(Boolean);
+          if (bad >= 0) throw new Error(`Blinds, level ${bad + 1}: ${levelProblems(levels)[bad]}`);
+          options[f.name] = levels;
+          continue;
+        }
         const v = values[f.name] ?? "";
         if (v === "") continue;
         options[f.name] = f.type === "datetime" ? new Date(v).getTime() : f.type === "number" || (f.type === "select" && typeof f.options?.[0]?.value === "number") ? Number(v) : v;
@@ -179,7 +194,7 @@ export function NewEventPage() {
           <p className="muted">Asking the game for its options…</p>
         ) : (
           <div className="form-grid">
-            {info.fields.map((f) => (
+            {info.fields.filter((f) => f.type !== "blinds").map((f) => (
               <label key={f.name} className={f.type === "text" ? "wide" : ""}>
                 <span>{f.label}</span>
                 {f.type === "select" ? (
@@ -206,14 +221,29 @@ export function NewEventPage() {
         )}
       </section>
 
+      {blindFields.map((f) => (
+        <section className="card" key={f.name}>
+          <h3>3. {f.label}</h3>
+          {f.help && <p className="muted small">{f.help}</p>}
+          <BlindEditor
+            gameId={gameId!}
+            field={f}
+            levels={blinds[f.name] ?? []}
+            onChange={(levels) => setBlinds((b) => ({ ...b, [f.name]: levels }))}
+            values={values}
+            onSetValues={(set) => setValues((v) => ({ ...v, ...Object.fromEntries(Object.entries(set).filter(([k]) => k in v).map(([k, n]) => [k, String(n)])) }))}
+          />
+        </section>
+      ))}
+
       <section className="card">
-        <h3>3. Prizes</h3>
+        <h3>{blindFields.length ? 4 : 3}. Prizes</h3>
         <p className="muted small">Each winner in these places gets a DM with their prize the moment the event ends.</p>
         <LadderEditor rules={rules} onChange={setRules} />
       </section>
 
       <section className="card">
-        <h3>4. Announce winners in</h3>
+        <h3>{blindFields.length ? 5 : 4}. Announce winners in</h3>
         <ChannelPicker value={channel} onChange={setChannel} placeholder={bot?.channels.length ? "Default announcement channel (Settings)" : undefined} />
       </section>
 

@@ -22,6 +22,88 @@ export function defaultLevels(minutes = 10): Level[] {
   }));
 }
 
+/**
+ * Ready-made structures for the "create tournament" form. Each sets the blind levels and, where it
+ * matters for the pace, the starting stack and breaks.
+ */
+export interface BlindPreset {
+  id: string;
+  name: string;
+  description: string;
+  levels: Level[];
+  set: { startingStack?: number; breakEveryLevels?: number; breakMinutes?: number };
+}
+
+const withAntes = (levels: [number, number][], minutes: number, anteFrom: number): Level[] =>
+  levels.map(([smallBlind, bigBlind], i) => ({ smallBlind, bigBlind, ante: i + 1 >= anteFrom ? Math.round(bigBlind / 10) : 0, minutes }));
+
+export const BLIND_PRESETS: BlindPreset[] = [
+  {
+    id: "standard",
+    name: "Standard",
+    description: "10-minute levels, antes from level 4, a 5-minute break every hour. About 2–3 hours for a full table.",
+    levels: defaultLevels(10),
+    set: { startingStack: 10_000, breakEveryLevels: 6, breakMinutes: 5 },
+  },
+  {
+    id: "turbo",
+    name: "Turbo",
+    description: "Same blinds, 5-minute levels. About an hour for a full table.",
+    levels: defaultLevels(5),
+    set: { startingStack: 10_000, breakEveryLevels: 8, breakMinutes: 3 },
+  },
+  {
+    id: "hyper",
+    name: "Hyper Turbo",
+    description: "3-minute levels that skip a step each time, smaller stacks, antes from level 2, no breaks. 20–30 minutes.",
+    levels: withAntes(BLINDS.filter((_, i) => i % 2 === 0), 3, 2),
+    set: { startingStack: 5_000, breakEveryLevels: 0, breakMinutes: 0 },
+  },
+  {
+    id: "deep",
+    name: "Deep Stack",
+    description: "25,000 chips and 15-minute levels for lots of play. Antes from level 6. 4+ hours.",
+    levels: withAntes(BLINDS, 15, 6),
+    set: { startingStack: 25_000, breakEveryLevels: 4, breakMinutes: 10 },
+  },
+  {
+    id: "casual",
+    name: "Casual Evening",
+    description: "20-minute levels with a break every hour — relaxed pace for a long night.",
+    levels: defaultLevels(20),
+    set: { startingStack: 10_000, breakEveryLevels: 3, breakMinutes: 10 },
+  },
+];
+
+export class StructureError extends Error {}
+
+const MAX_LEVELS = 60;
+
+/**
+ * Checks a blind structure someone typed in: whole numbers, big blind at least the small blind,
+ * blinds that never go down, sensible level lengths. Throws StructureError naming the bad level.
+ */
+export function cleanLevels(raw: unknown): Level[] {
+  if (!Array.isArray(raw) || raw.length === 0) throw new StructureError("Add at least one blind level");
+  if (raw.length > MAX_LEVELS) throw new StructureError(`Keep it to ${MAX_LEVELS} levels or fewer`);
+  const out: Level[] = [];
+  raw.forEach((l, i) => {
+    const n = (v: unknown) => Math.round(Number(v));
+    const lv = { smallBlind: n(l?.smallBlind), bigBlind: n(l?.bigBlind), ante: n(l?.ante ?? 0), minutes: n(l?.minutes) };
+    const at = `Level ${i + 1}`;
+    if (![lv.smallBlind, lv.bigBlind, lv.ante, lv.minutes].every(Number.isFinite)) throw new StructureError(`${at}: fill in every number`);
+    if (lv.smallBlind < 1 || lv.bigBlind > 100_000_000) throw new StructureError(`${at}: blinds must be between 1 and 100,000,000`);
+    if (lv.bigBlind < lv.smallBlind) throw new StructureError(`${at}: the big blind must be at least the small blind`);
+    if (lv.ante < 0 || lv.ante > lv.bigBlind) throw new StructureError(`${at}: the ante must be between 0 and the big blind`);
+    if (lv.minutes < 1 || lv.minutes > 120) throw new StructureError(`${at}: levels must last 1–120 minutes`);
+    const prev = out[i - 1];
+    if (prev && (lv.bigBlind < prev.bigBlind || lv.smallBlind < prev.smallBlind))
+      throw new StructureError(`${at}: blinds can't go down from level ${i}`);
+    out.push(lv);
+  });
+  return out;
+}
+
 export function defaultConfig(overrides: Partial<TournamentConfig> = {}): TournamentConfig {
   return {
     name: "Tournament",

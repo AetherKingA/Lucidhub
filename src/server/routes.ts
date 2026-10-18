@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { GameOp, Overview, PrizeRule } from "../shared/protocol.ts";
 import { AwardActionError, cancelAward, fillWaitingAwards, awardEvent, listAwards, markAwardManual, resendAward } from "./awards.ts";
 import { adminFromRequest, requireAdmin } from "./auth.ts";
+import { BlindPresetError, deleteBlindPreset, listBlindPresets, saveBlindPreset } from "./blindPresets.ts";
 import type { Bot } from "./bot.ts";
 import { audit, db, getSettings, recentAudit, saveSettings } from "./db.ts";
 import { EventLockedError, getEvent, listEvents, setAnnounceChannel, setRules, upsertEvent } from "./events.ts";
@@ -45,7 +46,7 @@ const id = (req: FastifyRequest) => Number((req.params as { id: string }).id);
 export function registerRoutes(app: FastifyInstance, bot: Bot, servers: ProcessManager) {
   // Input mistakes become a 400 with a message the dashboard shows as-is.
   app.setErrorHandler((err, req, reply) => {
-    if (err instanceof PrizeInputError || err instanceof GameInputError || err instanceof EventLockedError || err instanceof AwardActionError || err instanceof ServerControlError)
+    if (err instanceof PrizeInputError || err instanceof GameInputError || err instanceof EventLockedError || err instanceof AwardActionError || err instanceof ServerControlError || err instanceof BlindPresetError)
       return reply.code(400).send({ error: err.message });
     if (err instanceof GameRequestError) return reply.code(err.status >= 500 || err.status === 401 ? 502 : 400).send({ error: err.message });
     const status = (err as { statusCode?: number }).statusCode;
@@ -237,6 +238,23 @@ export function registerRoutes(app: FastifyInstance, bot: Bot, servers: ProcessM
     const removed = removeUnusedCodes(id(req));
     audit(actor(req), "unused codes removed", `${removed} from prize #${id(req)}`);
     return { removed };
+  });
+
+  // Blind structures you saved for a game (the game's own presets come with its create form).
+  app.get("/api/games/:id/blind-presets", async (req, reply) => {
+    const g = getGame(id(req));
+    return g ? listBlindPresets(g.key) : reply.code(404).send({ error: "Game not found" });
+  });
+  app.post<{ Body: { name?: string; levels?: unknown; set?: unknown } }>("/api/games/:id/blind-presets", async (req, reply) => {
+    const g = getGame(id(req));
+    if (!g) return reply.code(404).send({ error: "Game not found" });
+    const p = saveBlindPreset(g.key, req.body ?? {});
+    audit(actor(req), "blind preset saved", `${g.name}: ${p.name}`);
+    return p;
+  });
+  app.delete("/api/blind-presets/:id", async (req) => {
+    deleteBlindPreset(id(req));
+    return { ok: true };
   });
 
   app.get("/api/templates", async () => listTemplates());

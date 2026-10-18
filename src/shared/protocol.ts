@@ -7,12 +7,33 @@
 export interface GameField {
   name: string;
   label: string;
-  type: "text" | "number" | "datetime" | "select";
-  default?: string | number;
+  /** "blinds": a blind structure editor whose value is a list of levels. */
+  type: "text" | "number" | "datetime" | "select" | "blinds";
+  default?: string | number | BlindLevel[];
   min?: number;
   max?: number;
   options?: { value: string | number; label: string }[];
+  /** For "blinds": ready-made structures from the game. */
+  presets?: BlindPreset[];
   help?: string;
+}
+
+export interface BlindLevel {
+  smallBlind: number;
+  bigBlind: number;
+  ante: number;
+  minutes: number;
+}
+
+/** A named blind structure. `set` fills other fields of the form too (starting stack, breaks…). */
+export interface BlindPreset {
+  id: string;
+  name: string;
+  description?: string;
+  levels: BlindLevel[];
+  set?: Record<string, number>;
+  /** Saved by you in the hub (can be deleted), rather than built into the game. */
+  saved?: boolean;
 }
 
 /** GET /api/integration/info */

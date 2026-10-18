@@ -2,7 +2,7 @@ import type { TournamentDetail, TournamentSummary } from "../../shared/protocol.
 import { usersSharingIp } from "../db.ts";
 import { notifyHubEventFinished } from "../integration.ts";
 import { insertTournament, loadTournaments, saveBatch, saveResult } from "./store.ts";
-import { PLAYER_CAPS, TABLE_SIZE, defaultConfig, defaultLevels } from "./structure.ts";
+import { PLAYER_CAPS, TABLE_SIZE, cleanLevels, defaultConfig, defaultLevels } from "./structure.ts";
 import { Tournament, type TournamentHooks } from "./tournament.ts";
 import type { TournamentConfig } from "./types.ts";
 
@@ -25,6 +25,8 @@ export interface CreateOptions {
   startTime: number;
   startingStack?: number;
   levelMinutes?: number;
+  /** A full blind structure (each level's blinds, ante and minutes). Overrides levelMinutes. */
+  levels?: unknown;
   maxPlayers?: number;
   breakEveryLevels?: number;
   breakMinutes?: number;
@@ -86,7 +88,7 @@ export class TournamentManager {
       name: String(opts.name || "Tournament").slice(0, 60),
       startTime: clamp(opts.startTime, now, now + 365 * 86_400_000, now + 30 * 60_000),
       startingStack: clamp(opts.startingStack, 1000, 1_000_000, base.startingStack),
-      levels: defaultLevels(clamp(opts.levelMinutes, 1, 60, 10)),
+      levels: opts.levels !== undefined ? cleanLevels(opts.levels) : defaultLevels(clamp(opts.levelMinutes, 1, 60, 10)),
       tableSize: TABLE_SIZE,
       // Snap to the nearest allowed cap (6, 36, 216, 1296) so the bracket collapses evenly.
       maxPlayers: PLAYER_CAPS.find((c) => c >= Number(opts.maxPlayers)) ?? base.maxPlayers,
