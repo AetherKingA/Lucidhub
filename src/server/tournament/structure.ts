@@ -48,8 +48,20 @@ export function payoutPercents(entrants: number, payoutPercent: number): number[
   return weights.map((w) => Math.round((w / total) * 10_000) / 100);
 }
 
-/** Play-money prize pool: 100 points per entrant, so bigger fields are worth more. */
+/**
+ * Play-money prize pool: 100 points per entrant, so bigger fields are worth more. Rounded down per
+ * place with the leftover points going to the top places, so the total is exactly 100 x entrants.
+ */
+export function payoutPoints(entrants: number, payoutPercent: number): number[] {
+  const pool = entrants * 100;
+  const pcts = payoutPercents(entrants, payoutPercent);
+  const totalPct = pcts.reduce((a, b) => a + b, 0);
+  const points = pcts.map((p) => Math.floor((p / totalPct) * pool));
+  let left = pool - points.reduce((a, b) => a + b, 0);
+  for (let i = 0; left > 0; i = (i + 1) % points.length, left--) points[i]!++;
+  return points;
+}
+
 export function pointsForPlace(place: number, entrants: number, payoutPercent: number): number {
-  const pct = payoutPercents(entrants, payoutPercent)[place - 1];
-  return pct ? Math.round(pct * entrants) : 0;
+  return payoutPoints(entrants, payoutPercent)[place - 1] ?? 0;
 }

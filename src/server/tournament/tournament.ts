@@ -8,7 +8,7 @@
 import { shuffledDeck } from "../../shared/engine/cards.ts";
 import { type Action, IllegalActionError, applyAction, legalActions, startHand } from "../../shared/engine/hand.ts";
 import type { SeatView, TableView, TournamentDetail, TournamentSummary } from "../../shared/protocol.ts";
-import { payoutPercents, pointsForPlace } from "./structure.ts";
+import { payoutPercents, payoutPoints, pointsForPlace } from "./structure.ts";
 import type { Entrant, SeatPlayer, TableState, TournamentConfig, TournamentMeta } from "./types.ts";
 
 export class TournamentError extends Error {}
@@ -700,6 +700,7 @@ export class Tournament {
     const alive = all.filter((e) => e.place === null && e.tableId !== null).sort((a, b) => (chips.get(b.userId) ?? 0) - (chips.get(a.userId) ?? 0));
     const out = all.filter((e) => e.place !== null).sort((a, b) => a.place! - b.place!);
     const totalChips = [...chips.values()].reduce((a, b) => a + b, 0);
+    const points = payoutPoints(entrants, m.config.payoutPercent);
     return {
       summary: this.summary(viewerId),
       levels: m.config.levels,
@@ -709,7 +710,7 @@ export class Tournament {
       payouts: payoutPercents(entrants, m.config.payoutPercent).map((percent, i) => ({
         place: i + 1,
         percent,
-        points: Math.round(percent * entrants),
+        points: points[i] ?? 0,
       })),
       tables: [...this.tables.values()].sort((a, b) => a.id - b.id).map((t) => ({ id: t.id, players: occupiedCount(t), handNo: t.handNo })),
       standings: [...alive, ...out].slice(0, 300).map((e) => ({

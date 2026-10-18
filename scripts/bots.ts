@@ -5,6 +5,7 @@
 //
 // Without a tournament id, bots join the first tournament that's open for registration.
 // --fast makes bots act almost instantly (for load testing) instead of thinking for 0.5-2.5 s.
+// --shove makes bots go all-in often, so a test tournament finishes in minutes.
 // Bot accounts are created in the local database with Discord IDs starting at 900000000000000001.
 
 import { createHash, randomBytes } from "node:crypto";
@@ -17,6 +18,7 @@ const args = process.argv.slice(2);
 const count = Number(args.find((a) => /^\d+$/.test(a)) ?? 10);
 const wantedId = Number(args.filter((a) => /^\d+$/.test(a))[1] ?? 0) || null;
 const fast = args.includes("--fast");
+const shove = args.includes("--shove");
 const url = `ws://localhost:${config.port}/ws`;
 
 let connected = 0;
@@ -83,7 +85,9 @@ function startBot(n: number, token = makeSession(n)) {
       () => {
         const r = Math.random();
         let action;
-        if (legal.canRaise && r < 0.1) action = { type: "raise", to: legal.minRaiseTo };
+        if (shove && legal.canRaise && r < 0.3) action = { type: "raise", to: legal.maxRaiseTo };
+        else if (shove && !legal.canRaise && !legal.canCheck && r < 0.6) action = { type: "call" };
+        else if (legal.canRaise && r < 0.1) action = { type: "raise", to: legal.minRaiseTo };
         else if (!legal.canCheck && r < 0.4) action = { type: "fold" };
         else action = legal.canCheck ? { type: "check" } : { type: "call" };
         sentAt = Date.now();

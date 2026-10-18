@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { type Action, legalActions } from "../src/shared/engine/hand.ts";
-import { defaultConfig, payoutPercents } from "../src/server/tournament/structure.ts";
+import { defaultConfig, payoutPercents, payoutPoints } from "../src/server/tournament/structure.ts";
 import { Tournament, type TournamentHooks, noopHooks } from "../src/server/tournament/tournament.ts";
 import type { TableState, TournamentConfig } from "../src/server/tournament/types.ts";
 
@@ -64,6 +64,16 @@ function simulate(players: number, seed: number, cfg: Partial<TournamentConfig> 
   }
   return t;
 }
+
+describe("payouts", () => {
+  it("hands out exactly 100 points per entrant", () => {
+    for (const n of [2, 9, 26, 137, 1000]) {
+      const pts = payoutPoints(n, 15);
+      expect(pts.reduce((a, b) => a + b, 0)).toBe(n * 100);
+      for (let i = 1; i < pts.length; i++) expect(pts[i]!).toBeLessThanOrEqual(pts[i - 1]!);
+    }
+  });
+});
 
 describe("seating", () => {
   it("starts automatically at the start time and seats players evenly", () => {
