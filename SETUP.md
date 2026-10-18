@@ -70,7 +70,7 @@ Sign in with the Discord account you put in `ADMIN_DISCORD_IDS`. You'll see an *
 
 ## Event Hub integration
 
-The Event Hub (a separate admin dashboard on this PC) can create and control tournaments here, read
+The Event Hub (LucidHub, the admin dashboard this folder sits inside, two levels up) can create and control tournaments here, read
 the final places and hand out Discord prizes to the winners. It's off until you set a shared secret.
 
 1. In `.env`, set `HUB_SECRET` to the same long random string you put in the hub's config, and
