@@ -6,15 +6,16 @@ import fastifyStatic from "@fastify/static";
 import { registerAuthRoutes } from "./auth.ts";
 import type { Bot } from "./bot.ts";
 import { config } from "./config.ts";
+import type { ProcessManager } from "./processes.ts";
 import { registerRoutes } from "./routes.ts";
 
 /** The hub's HTTP server: dashboard API, game webhooks, and the built dashboard. */
-export async function buildApp(bot: Bot) {
+export async function buildApp(bot: Bot, servers: ProcessManager) {
   const app = Fastify({ logger: { level: "warn" } });
   await app.register(fastifyCookie);
 
   registerAuthRoutes(app);
-  registerRoutes(app, bot);
+  registerRoutes(app, bot, servers);
   app.get("/api/health", async () => ({ ok: true, bot: bot.ready() }));
 
   // Serve the built dashboard. Unknown non-API paths get index.html so client-side routes work.

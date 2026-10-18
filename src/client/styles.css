@@ -197,3 +197,18 @@ label.inline input { width: 72px; }
   .grid-2 { grid-template-columns: 1fr; }
   .card { overflow-x: auto; }
 }
+
+/* ---------- game servers ---------- */
+h4 { margin: 0 0 10px; font-size: 13px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.launch { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+label.check { display: flex; gap: 8px; align-items: center; margin-top: 12px; font-size: 13.5px; cursor: pointer; }
+label.check input { width: auto; accent-color: var(--accent-text); }
+.server { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+.server > p { margin: 8px 0 0; }
+.pill.srv-running { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+.pill.srv-starting, .pill.srv-stopping { background: color-mix(in srgb, var(--info) 18%, transparent); color: var(--info); }
+.pill.srv-crashed { background: color-mix(in srgb, var(--bad) 18%, transparent); color: #ff8f88; }
+.log {
+  margin: 12px 0 0; max-height: 300px; overflow: auto; padding: 10px 12px; border-radius: 10px;
+  background: #050505; border: 1px solid var(--border); color: #c6c8cb; font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word;
+}

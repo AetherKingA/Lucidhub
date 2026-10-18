@@ -5,7 +5,22 @@ import { adminFromRequest, requireAdmin } from "./auth.ts";
 import type { Bot } from "./bot.ts";
 import { audit, db, getSettings, recentAudit, saveSettings } from "./db.ts";
 import { EventLockedError, getEvent, listEvents, setAnnounceChannel, setRules, upsertEvent } from "./events.ts";
-import { GameInputError, GameRequestError, addGame, gameClient, gameSecret, getGame, getGameByKey, listGames, publicGame, updateGame } from "./games.ts";
+import {
+  GameInputError,
+  GameRequestError,
+  type LaunchInput,
+  addGame,
+  gameClient,
+  gameSecret,
+  getGame,
+  getGameByKey,
+  listGames,
+  publicGame,
+  suggestedLaunch,
+  updateGame,
+  writeGameEnv,
+} from "./games.ts";
+import { type ProcessManager, ServerControlError } from "./processes.ts";
 import {
   PrizeInputError,
   addCodes,
@@ -28,10 +43,10 @@ const SNOWFLAKE = /^\d{5,25}$/;
 
 const id = (req: FastifyRequest) => Number((req.params as { id: string }).id);
 
-export function registerRoutes(app: FastifyInstance, bot: Bot) {
+export function registerRoutes(app: FastifyInstance, bot: Bot, servers: ProcessManager) {
   // Input mistakes become a 400 with a message the dashboard shows as-is.
   app.setErrorHandler((err, req, reply) => {
-    if (err instanceof PrizeInputError || err instanceof GameInputError || err instanceof EventLockedError || err instanceof AwardActionError)
+    if (err instanceof PrizeInputError || err instanceof GameInputError || err instanceof EventLockedError || err instanceof AwardActionError || err instanceof ServerControlError)
       return reply.code(400).send({ error: err.message });
     if (err instanceof GameRequestError) return reply.code(err.status >= 500 || err.status === 401 ? 502 : 400).send({ error: err.message });
     const status = (err as { statusCode?: number }).statusCode;
@@ -61,7 +76,11 @@ export function registerRoutes(app: FastifyInstance, bot: Bot) {
     for (const p of listPrizes()) {
       if (p.type === "code_pool" && p.stock <= p.lowStockThreshold) attention.push({ kind: "low_stock", message: `${p.name}: ${p.stock} code${p.stock === 1 ? "" : "s"} left.` });
     }
-    for (const g of listGames()) if (g.enabled && g.lastError) attention.push({ kind: "game_offline", message: g.lastError });
+    for (const g of listGames()) {
+      const s = servers.status(g.id);
+      if (s.state === "crashed") attention.push({ kind: "game_offline", message: `${g.name}'s server: ${s.message ?? "crashed"}` });
+      else if (g.enabled && g.lastError && s.state !== "starting") attention.push({ kind: "game_offline", message: g.lastError });
+    }
     if (!bot.ready()) attention.push({ kind: "bot_offline", message: "The Discord bot is offline, so prizes are queued, not sent. See Settings." });
     return {
       upcoming: listEvents({ status: "registering", limit: 10 }).reverse(),
@@ -77,17 +96,50 @@ export function registerRoutes(app: FastifyInstance, bot: Bot) {
 
   app.get("/api/games", async () => listGames().map(publicGame));
 
-  app.post<{ Body: { key: string; name: string; baseUrl: string; secret?: string } }>("/api/games", async (req) => {
+  app.post<{ Body: { key: string; name: string; baseUrl: string; secret?: string } & LaunchInput }>("/api/games", async (req) => {
     const g = addGame(req.body ?? ({} as never));
     audit(actor(req), "game added", g.name);
     void syncGame(g);
     return publicGame(g);
   });
 
-  app.patch<{ Body: { name?: string; baseUrl?: string; enabled?: boolean; secret?: string } }>("/api/games/:id", async (req) => {
+  app.patch<{ Body: { name?: string; baseUrl?: string; enabled?: boolean; secret?: string } & LaunchInput }>("/api/games/:id", async (req) => {
     const g = updateGame(id(req), req.body ?? {});
     audit(actor(req), "game updated", g.name);
     return publicGame(g);
+  });
+
+  /** Launch settings to pre-fill when connecting a known game (Poker Night next to the hub). */
+  app.get<{ Querystring: { key?: string } }>("/api/games/suggest", async (req) => suggestedLaunch(String(req.query.key ?? "")) ?? {});
+
+  // ---------------------------------------------------------------- game servers
+
+  app.get("/api/servers", async () => listGames().map((g) => servers.status(g.id)));
+
+  app.get("/api/games/:id/server/logs", async (req) => ({ lines: servers.logs(id(req)) }));
+
+  app.post<{ Params: { id: string; action: string } }>("/api/games/:id/server/:action", async (req, reply) => {
+    const who = actor(req);
+    switch (req.params.action) {
+      case "start":
+        await servers.start(id(req), who);
+        break;
+      case "stop":
+        await servers.stop(id(req), who);
+        break;
+      case "restart":
+        await servers.restart(id(req), who);
+        break;
+      default:
+        return reply.code(404).send({ error: "Unknown action" });
+    }
+    return servers.status(id(req));
+  });
+
+  app.post("/api/games/:id/write-env", async (req) => {
+    const out = writeGameEnv(id(req));
+    audit(actor(req), "game .env updated", out.path);
+    return out;
   });
 
   app.get("/api/games/:id/secret", async (req, reply) => {

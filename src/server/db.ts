@@ -129,6 +129,16 @@ db.exec(`
   );
 `);
 
+// Columns added after the first release. SQLite can't "ADD COLUMN IF NOT EXISTS", so check first.
+function addColumn(table: string, column: string, definition: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+// How the hub starts a game's server: a folder, a command run there, and whether to start it with the hub.
+addColumn("games", "launch_dir", "TEXT");
+addColumn("games", "launch_cmd", "TEXT");
+addColumn("games", "autostart", "INTEGER NOT NULL DEFAULT 0");
+
 /** Runs fn in a transaction; rolls back if it throws. */
 export function tx<T>(fn: () => T): T {
   db.exec("BEGIN IMMEDIATE");

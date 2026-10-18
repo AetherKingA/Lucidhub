@@ -8,6 +8,7 @@ import { db } from "../src/server/db.ts";
 import { DeliveryWorker, DmClosedError, type Messenger } from "../src/server/delivery.ts";
 import { getEvent, setRules, upsertEvent } from "../src/server/events.ts";
 import { addGame } from "../src/server/games.ts";
+import { ProcessManager } from "../src/server/processes.ts";
 import { addCodes, createPrize, getPrize, parseCodes } from "../src/server/prizes.ts";
 import { sign, verify } from "../src/server/signing.ts";
 import { syncGame } from "../src/server/sync.ts";
@@ -289,7 +290,7 @@ describe("HTTP API", () => {
   let app: Awaited<ReturnType<typeof buildApp>>["app"];
 
   beforeEach(async () => {
-    ({ app } = await buildApp(fakeBot));
+    ({ app } = await buildApp(fakeBot, new ProcessManager()));
   });
   afterEach(async () => {
     await app.close();

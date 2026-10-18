@@ -65,6 +65,25 @@ export interface GameRow {
   lastError: string | null;
   /** The webhook URL to put in the game's config. */
   webhookUrl: string;
+  launchDir: string | null;
+  launchCmd: string | null;
+  autostart: boolean;
+}
+
+export type ServerState = "stopped" | "starting" | "running" | "stopping" | "crashed";
+
+/** A game server the hub runs as a background process. */
+export interface ServerStatus {
+  gameId: number;
+  state: ServerState;
+  pid: number | null;
+  startedAt: number | null;
+  /** The game answered the hub since it was started. */
+  ready: boolean;
+  exitCode: number | null;
+  /** Crash restarts in the last 10 minutes. */
+  recentRestarts: number;
+  message: string | null;
 }
 
 export interface PrizeRule {

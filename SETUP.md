@@ -25,16 +25,34 @@ Never share `.env`: the bot token lets anyone control your bot.
 
 ## 3. Start it and finish in the dashboard
 
-1. Double-click `start.bat`. Open http://localhost:3100 and sign in with Discord.
+1. Double-click the **LucidHub** shortcut on your desktop (or `start.bat` in this folder). The
+   dashboard opens in your browser once it's up; sign in with Discord.
 2. **Settings → Invite the bot to a server**, pick your server, and approve. Back in Settings, choose
    the server, the channel to announce winners in, and a private channel for alerts (or leave it on
    "DM me"). Click **Send test message** to check the bot can post there.
-3. **Games → Connect a game.** The defaults (Poker Night, `poker`, `http://127.0.0.1:3000`) are right
-   for Poker Night on this PC. Click **Show setup**, copy the two lines into
-   `poker-tournament/.env`, and restart Poker Night. **Test connection** should then say it works.
+3. **Games → Connect a game.** Everything is pre-filled for Poker Night on this PC, including where
+   it lives and how to start it. Leave **Start it whenever LucidHub starts** ticked and click
+   **Connect**: LucidHub writes the connection settings into Poker Night's `.env` for you. Make sure
+   that `.env` also has Poker Night's own settings (see its SETUP.md), then click **Start**.
 4. **Prizes → New prize.** A *code pool* gives each winner the next unused code (game keys, gift
    cards); paste codes one per line or upload a .txt/.csv. A *message* prize sends the same text to
    every winner (e.g. "Reply here with your shirt size").
+
+## Game servers
+
+LucidHub runs your game servers for you, so the desktop shortcut is the only thing you start.
+
+- **Games** shows each server as Running, Stopped or Crashed, with **Start**, **Stop**, **Restart**
+  and a live **Log**. Logs are also saved in `data/logs/` (one file per game).
+- Servers set to **start whenever LucidHub starts** come up with the hub and are restarted
+  automatically if they crash. If one crashes five times in ten minutes, LucidHub stops retrying and
+  alerts you. Check its log.
+- **Stop** asks the game to save and exit (Poker Night saves every tournament; running ones come back
+  paused). Closing the LucidHub window stops the game servers it started the same way.
+- If a game is already running when LucidHub starts it (say you opened Poker Night's own
+  `start.bat`), LucidHub takes over that copy instead of starting a second one.
+- To run a game yourself instead, open its **Settings** on the Games page and choose
+  **Stop running it from LucidHub**.
 
 ## Running events
 

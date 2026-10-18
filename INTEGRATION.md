@@ -40,6 +40,7 @@ All JSON. Errors are `{"error": "<message for the admin>"}` with a 4xx status.
 | `GET /api/integration/events?since=<ms>` | `GameEvent[]`: every open event, plus finished/cancelled ones that ended after `since` (even if the game no longer shows them). |
 | `POST /api/integration/events/:id/:op` | `op` is `start`, `pause`, `resume` or `cancel`. Returns the updated `GameEvent`. |
 | `GET /api/integration/events/:id/results` | `{ id, status, finishedAt, results: [{ discordId, username, place }] }`, sorted by place. |
+| `POST /api/integration/shutdown` | *Optional.* Save, answer `{ ok: true }`, then exit. Lets the hub stop a server it runs (Windows can't send Ctrl+C to a background process). Without it the hub force-stops the process. |
 
 Types are in `src/shared/protocol.ts`:
 
@@ -62,6 +63,13 @@ POST {HUB_URL}/api/games/{key}/webhook
 Fire and forget — no retries needed. The hub also polls every game every two minutes, so a missed
 webhook only delays prizes; it never loses them. The results route must already return the final
 places when the webhook is sent.
+
+## Letting the hub run the server
+
+On the hub's Games page, give the game a **server folder** and a **start command** (run there with
+`cmd /c`). The command must start the server in the foreground and keep running. The game gets the
+hub's environment minus the hub's own settings (port, database, Discord keys), so it reads its own
+`.env`. See Poker Night's `scripts/hub-start.cmd` for an example.
 
 ## Registering the game
 
