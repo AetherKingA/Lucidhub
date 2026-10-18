@@ -80,3 +80,7 @@ Run these from the `event-hub` folder (one `npm install` there covers every game
 npm run dev -w games/poker-tournament    # server + live-reloading site at http://localhost:5173
 npm test -w games/poker-tournament       # engine and tournament tests, including full simulations
 ```
+
+`test/visibility.test.ts` checks that nobody is sent cards they shouldn't see, and
+`scripts/visibility-check.ts` checks the same thing against a running server over the real WebSocket
+(see the comment at its top; it creates test accounts, so not against a real event).
