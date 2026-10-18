@@ -1,61 +1,69 @@
 # LucidHub — setup
 
-The hub is your admin dashboard above all your games. You create events here (they run on the game
-sites, like Poker Night), attach prizes, and the Discord bot DMs each winner their prize the moment
-an event ends and announces the winners in your server. Set it up once and it runs by itself.
+LucidHub is the one thing you run. It's your admin dashboard, it runs your games (Poker Night now,
+chess later), opens them to players on the internet, and its Discord bot DMs each winner their prize
+the moment an event ends and announces the winners in your server. Set it up once and it runs by
+itself.
 
-It runs on the same Windows PC as Poker Night and is **only reachable from this PC** (it isn't
-exposed through Tailscale Funnel — it holds your prize codes). One-time setup takes about 10 minutes.
+- **One settings file:** `event-hub/.env`. Games get what they need from LucidHub; they have no
+  settings file of their own.
+- **One data folder:** `event-hub/data/`. The hub's data is in `hub.db`, each game's in
+  `games/<game>/`, server logs in `logs/`.
+- **Games live in `games/`** (Poker Night is `games/poker-tournament`). Everything is one git repo
+  and one `npm install`.
 
-Your games live inside this folder, under `games/` (Poker Night is `games/poker-tournament`, with its
-own SETUP.md). Each game is its own project with its own git history; the hub's repo ignores `games/`.
+The dashboard itself is **only reachable from this PC** (it holds your prize codes). Players reach
+the games through Tailscale Funnel.
 
-## 1. Add a bot to your Discord application
+## 1. Discord application
 
-Use the same application you made for Poker Night (https://discord.com/developers/applications).
+Use one application for everything: https://discord.com/developers/applications
 
-1. Open **Bot** in the sidebar. Click **Reset Token** and copy it — that's `DISCORD_BOT_TOKEN`.
-2. On the same page, leave **Privileged Gateway Intents** all off; the bot doesn't need them.
-3. Open **OAuth2** and, under **Redirects**, add `http://localhost:3100/auth/discord/callback`. Save.
-4. Copy the **Client ID** and **Client Secret** (the same ones Poker Night uses).
+1. **Bot** page: click **Reset Token** and copy it (`DISCORD_BOT_TOKEN`). Leave the Privileged
+   Gateway Intents off; the bot doesn't need them.
+2. **OAuth2** page: copy the **Client ID** and **Client Secret**. Under **Redirects**, add
+   `http://localhost:3100/auth/discord/callback` (your dashboard login) and click **Save Changes**.
+   You'll add one more redirect for Poker Night in step 4. LucidHub shows you the exact address.
 
-## 2. Create your .env file
+## 2. Settings file
 
 Copy `.env.example` to `.env` and fill in `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`,
-`DISCORD_BOT_TOKEN` and `ADMIN_DISCORD_IDS` (your own Discord user ID).
+`DISCORD_BOT_TOKEN` and `ADMIN_DISCORD_IDS` (your Discord user ID: Settings → Advanced → Developer
+Mode, then right-click your name → Copy User ID). Never share `.env`.
 
-Never share `.env`: the bot token lets anyone control your bot.
+## 3. Tailscale (so players can reach your games)
 
-## 3. Start it and finish in the dashboard
+Install Tailscale from https://tailscale.com/download/windows and sign in. That's all: LucidHub opens
+the Funnel itself when it starts a public game. The first time, Tailscale may ask you to approve
+Funnel for this PC. LucidHub then shows an **Approve** link on the Games page (and alerts you).
+Click it, approve, and press **Restart**.
 
-1. Double-click the **LucidHub** shortcut on your desktop (or `start.bat` in this folder). The
-   dashboard opens in your browser once it's up; sign in with Discord.
+## 4. Start LucidHub and finish in the dashboard
+
+1. Double-click the **LucidHub** shortcut on your desktop (or `start.bat` here). The first start
+   installs everything, which takes a minute. The dashboard opens in your browser; sign in.
 2. **Settings → Invite the bot to a server**, pick your server, and approve. Back in Settings, choose
    the server, the channel to announce winners in, and a private channel for alerts (or leave it on
-   "DM me"). Click **Send test message** to check the bot can post there.
-3. **Games → Connect a game.** Everything is pre-filled for Poker Night on this PC, including where
-   it lives and how to start it. Leave **Start it whenever LucidHub starts** ticked and click
-   **Connect**: LucidHub writes the connection settings into Poker Night's `.env` for you. Make sure
-   that `.env` also has Poker Night's own settings (see its SETUP.md), then click **Start**.
-4. **Prizes → New prize.** A *code pool* gives each winner the next unused code (game keys, gift
+   "DM me"). Click **Send test message** to check.
+3. **Games → Poker Night.** Connect it if it isn't there yet. Its settings are pre-filled: folder
+   `games\poker-tournament`, start command `npm start`, *start with LucidHub* and *open to players*
+   ticked. Click **Start**.
+4. When it's running, the Games page shows the address players use and **the Discord redirect it
+   needs**. Copy that redirect into Discord (OAuth2 → Redirects → Save Changes). Without it, players
+   get "Invalid OAuth2 redirect_uri" when they sign in.
+5. **Prizes → New prize.** A *code pool* gives each winner the next unused code (game keys, gift
    cards); paste codes one per line or upload a .txt/.csv. A *message* prize sends the same text to
    every winner (e.g. "Reply here with your shirt size").
 
 ## Game servers
 
-LucidHub runs your game servers for you, so the desktop shortcut is the only thing you start.
-
 - **Games** shows each server as Running, Stopped or Crashed, with **Start**, **Stop**, **Restart**
-  and a live **Log**. Logs are also saved in `data/logs/` (one file per game).
-- Servers set to **start whenever LucidHub starts** come up with the hub and are restarted
-  automatically if they crash. If one crashes five times in ten minutes, LucidHub stops retrying and
-  alerts you. Check its log.
+  and a live **Log** (also saved in `data/logs/`).
+- Servers set to *start with LucidHub* come up with it and are restarted automatically if they
+  crash. After five crashes in ten minutes LucidHub stops retrying and alerts you. Check the log.
 - **Stop** asks the game to save and exit (Poker Night saves every tournament; running ones come back
-  paused). Closing the LucidHub window stops the game servers it started the same way.
-- If a game is already running when LucidHub starts it (say you opened Poker Night's own
-  `start.bat`), LucidHub takes over that copy instead of starting a second one.
-- To run a game yourself instead, open its **Settings** on the Games page and choose
-  **Stop running it from LucidHub**.
+  paused) and closes its Funnel. Closing the LucidHub window does the same for every game.
+- While LucidHub runs, Windows won't go to sleep. The screen can still turn off.
 
 ## Running events
 
@@ -63,10 +71,11 @@ LucidHub runs your game servers for you, so the desktop shortcut is the only thi
   speed…), add prizes by place (1st → $50 card, 2nd–3rd → game key), pick the announcement channel,
   and create it. It appears on the game site straight away.
 - **That's it.** When the event ends, each winner gets a DM with their prize and the winners are
-  announced in the channel (prize names only — codes are never posted publicly).
-- Tournaments you create on the Poker Night site directly also show up under **Events**; open one to
+  announced in the channel (prize names only; codes are never posted publicly).
+- Tournaments created on the Poker Night site directly also show up under **Events**; open one to
   attach prizes before it ends. You can even add prizes after an event finished and they're sent then.
 - **Save a ladder** you use often ("Weekly poker") and load it on the next event in one click.
+- How poker tournaments work (format, pausing, shared-IP flags): `games/poker-tournament/README.md`.
 
 ### What happens when something goes wrong
 
@@ -75,23 +84,33 @@ LucidHub runs your game servers for you, so the desktop shortcut is the only thi
   lets you **Resend** or mark it **Delivered by hand**.
 - **A code pool runs out:** winners wait in line and you get an alert. Add codes and they're sent
   automatically, oldest winner first. You're also warned when stock gets low.
-- **The hub was off when an event ended:** start it again — within two minutes it checks every game
+- **LucidHub was off when an event ended:** start it again. Within two minutes it checks every game
   and sends anything it missed. Nobody is ever paid twice.
 - **The bot is offline or not set up:** prizes queue up and go out once it's back.
 
 Winners can type **/prizes** in your server any time to see everything they've won. Admins can type
 **/hub status** for a quick summary without opening the dashboard.
 
+## Troubleshooting
+
+- **"Invalid OAuth2 redirect_uri" from Discord:** the address isn't in your Discord application's
+  Redirects, character for character. The dashboard needs `http://localhost:3100/auth/discord/callback`;
+  each public game needs the redirect shown on its Games card. Click **Save Changes** after adding.
+- **Players can't open Poker Night:** check its Games card. An **Approve** link means Tailscale
+  needs your one-time OK. "Tailscale isn't connected" means open Tailscale and sign in. Then Restart.
+- **Players see a 502 error:** Funnel is open but the game isn't running. Start it on the Games page.
+
 ## Using the dashboard from your phone
 
-The hub only listens on this PC. If you have Tailscale on your phone, run
-`tailscale serve --bg 3100` once; the dashboard is then at `https://your-pc-name.tail1234.ts.net`
-from your own devices only (not public). Set `PUBLIC_URL` to that address, add
-`<that address>/auth/discord/callback` to the Discord redirects, and restart the hub.
+The dashboard only listens on this PC. If you have Tailscale on your phone, run
+`tailscale serve --bg --https=10000 3100` once; the dashboard is then at
+`https://your-pc-name.tail1234.ts.net:10000` from your own devices only (not public). Set
+`PUBLIC_URL` to that address, add `<that address>/auth/discord/callback` to the Discord redirects,
+and restart LucidHub. (Port 10000 keeps it clear of the public game on the main address.)
 
 ## Backups
 
-All data — prizes, unused codes, who won what — lives in `data/hub.db`. Back up that file.
+Back up the `data/` folder: prizes, unused codes, who won what, and every game's data.
 
 ## Testing without Discord
 
@@ -106,8 +125,9 @@ reload. Without a bot token the dashboard works, but prizes wait in the queue.
 ## For development
 
 ```
-npm run dev     # hub + live-reloading dashboard at http://localhost:5174
-npm test        # award engine, delivery, signing and API tests
+npm run dev        # hub + live-reloading dashboard at http://localhost:5174
+npm test           # hub tests (awards, delivery, signing, game servers, API)
+npm run test:all   # hub and every game
 ```
 
 Adding another game (chess, …): see `INTEGRATION.md`.

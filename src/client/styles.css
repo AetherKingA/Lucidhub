@@ -212,3 +212,6 @@ label.check input { width: auto; accent-color: var(--accent-text); }
   margin: 12px 0 0; max-height: 300px; overflow: auto; padding: 10px 12px; border-radius: 10px;
   background: #050505; border: 1px solid var(--border); color: #c6c8cb; font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word;
 }
+
+.inline-select { width: auto; margin-left: 8px; padding: 3px 8px; font-size: 13px; }
+.setup-box > .launch { margin-top: 0; padding-top: 0; border-top: 0; }

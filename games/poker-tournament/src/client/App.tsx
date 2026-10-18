@@ -13,7 +13,7 @@ const LOGIN_ERRORS: Record<string, string> = {
   banned: "This account has been banned from the site.",
   cancelled: "Discord login was cancelled.",
   login_failed: "Something went wrong signing in with Discord. Please try again.",
-  not_configured: "Discord login isn't set up on this server yet (the host needs to finish SETUP.md).",
+  not_configured: "Discord login isn't set up on this server yet (the host needs to finish LucidHub's setup).",
 };
 
 type MeState = { status: "loading" } | { status: "signedOut" } | { status: "signedIn"; user: UserInfo };

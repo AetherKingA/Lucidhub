@@ -18,7 +18,6 @@ import {
   publicGame,
   suggestedLaunch,
   updateGame,
-  writeGameEnv,
 } from "./games.ts";
 import { type ProcessManager, ServerControlError } from "./processes.ts";
 import {
@@ -134,12 +133,6 @@ export function registerRoutes(app: FastifyInstance, bot: Bot, servers: ProcessM
         return reply.code(404).send({ error: "Unknown action" });
     }
     return servers.status(id(req));
-  });
-
-  app.post("/api/games/:id/write-env", async (req) => {
-    const out = writeGameEnv(id(req));
-    audit(actor(req), "game .env updated", out.path);
-    return out;
   });
 
   app.get("/api/games/:id/secret", async (req, reply) => {

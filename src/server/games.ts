@@ -1,12 +1,13 @@
 // Connected game sites and the signed client the hub uses to talk to them (INTEGRATION.md).
 
 import { randomBytes } from "node:crypto";
-import { copyFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import type { GameEvent, GameInfo, GameOp, GameResults, GameRow } from "../shared/protocol.ts";
 import { ROOT, config } from "./config.ts";
 import { db } from "./db.ts";
 import { sign } from "./signing.ts";
+import { FUNNEL_PORTS } from "./tailscale.ts";
 
 export interface Game {
   id: number;
@@ -22,6 +23,10 @@ export interface Game {
   launchCmd: string | null;
   /** Start the game server whenever the hub starts (and restart it if it crashes). */
   autostart: boolean;
+  /** Open the game to players on the internet with Tailscale Funnel while it runs. */
+  publicAccess: boolean;
+  /** Which public HTTPS port the Funnel uses (443, 8443 or 10000): one game per port. */
+  funnelPort: number;
 }
 
 type GameDbRow = {
@@ -36,6 +41,8 @@ type GameDbRow = {
   launch_dir: string | null;
   launch_cmd: string | null;
   autostart: number;
+  public_access: number;
+  funnel_port: number;
 };
 
 const toGame = (r: GameDbRow): Game => ({
@@ -50,7 +57,15 @@ const toGame = (r: GameDbRow): Game => ({
   launchDir: r.launch_dir,
   launchCmd: r.launch_cmd,
   autostart: r.autostart === 1,
+  publicAccess: r.public_access === 1,
+  funnelPort: r.funnel_port,
 });
+
+/** The port a game listens on, from its address (http://127.0.0.1:3000 → 3000). */
+export function localPort(g: Game): number {
+  const u = new URL(g.baseUrl);
+  return Number(u.port) || (u.protocol === "https:" ? 443 : 80);
+}
 
 export const webhookUrl = (key: string) => `http://127.0.0.1:${config.port}/api/games/${key}/webhook`;
 
@@ -67,6 +82,8 @@ export function publicGame(g: Game): GameRow {
     launchDir: g.launchDir,
     launchCmd: g.launchCmd,
     autostart: g.autostart,
+    publicAccess: g.publicAccess,
+    funnelPort: g.funnelPort,
   };
 }
 
@@ -92,13 +109,16 @@ export interface LaunchInput {
   launchDir?: string | null;
   launchCmd?: string | null;
   autostart?: boolean;
+  publicAccess?: boolean;
+  funnelPort?: number;
 }
 
 /** Poker Night lives in games/ inside the hub folder, so the dashboard can fill in its launch settings. */
-export function suggestedLaunch(key: string): { launchDir: string; launchCmd: string } | null {
+export function suggestedLaunch(key: string): { launchDir: string; launchCmd: string; publicAccess: boolean } | null {
   if (key !== "poker") return null;
   const dir = resolve(ROOT, "games/poker-tournament");
-  return existsSync(resolve(dir, "scripts/hub-start.cmd")) ? { launchDir: dir, launchCmd: "scripts\\hub-start.cmd" } : null;
+  // "npm start" builds the site, then runs the server. Players reach it over the internet.
+  return existsSync(resolve(dir, "package.json")) ? { launchDir: dir, launchCmd: "npm start", publicAccess: true } : null;
 }
 
 /** cmd.exe reads "scripts/hub-start.cmd" as a program "scripts" with a switch, so use backslashes in the program path. */
@@ -115,7 +135,15 @@ function cleanLaunch(input: LaunchInput) {
   if (launchDir && (!isAbsolute(launchDir) || !existsSync(launchDir) || !statSync(launchDir).isDirectory()))
     throw new GameInputError("Server folder must be a full path to a folder that exists, e.g. C:\\...\\poker-tournament");
   if (Boolean(launchDir) !== Boolean(launchCmd)) throw new GameInputError("Fill in both the server folder and the start command, or neither");
-  return { launchDir, launchCmd, autostart: Boolean(input.autostart && launchDir) };
+  const funnelPort = Number(input.funnelPort ?? 443);
+  if (!FUNNEL_PORTS.includes(funnelPort as (typeof FUNNEL_PORTS)[number])) throw new GameInputError("Public port must be 443, 8443 or 10000");
+  return { launchDir, launchCmd, autostart: Boolean(input.autostart && launchDir), publicAccess: Boolean(input.publicAccess && launchDir), funnelPort };
+}
+
+function checkFunnelPortFree(id: number | null, launch: { publicAccess: boolean; funnelPort: number }) {
+  if (!launch.publicAccess) return;
+  const clash = listGames().find((g) => g.id !== id && g.publicAccess && g.funnelPort === launch.funnelPort);
+  if (clash) throw new GameInputError(`${clash.name} already uses public port ${launch.funnelPort}. Pick another (443, 8443 or 10000).`);
 }
 
 export function addGame(input: { key: string; name: string; baseUrl: string; secret?: string } & LaunchInput): Game {
@@ -126,9 +154,13 @@ export function addGame(input: { key: string; name: string; baseUrl: string; sec
   const secret = input.secret?.trim() || randomBytes(32).toString("hex");
   const name = String(input.name ?? "").trim().slice(0, 60) || key;
   const launch = cleanLaunch(input);
+  checkFunnelPortFree(null, launch);
   const r = db
-    .prepare(`INSERT INTO games (key, name, base_url, secret, launch_dir, launch_cmd, autostart, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`)
-    .get(key, name, baseUrl, secret, launch.launchDir, launch.launchCmd, Number(launch.autostart), Date.now()) as GameDbRow;
+    .prepare(
+      `INSERT INTO games (key, name, base_url, secret, launch_dir, launch_cmd, autostart, public_access, funnel_port, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+    )
+    .get(key, name, baseUrl, secret, launch.launchDir, launch.launchCmd, Number(launch.autostart), Number(launch.publicAccess), launch.funnelPort, Date.now()) as GameDbRow;
   return toGame(r);
 }
 
@@ -139,8 +171,18 @@ export function updateGame(id: number, patch: { name?: string; baseUrl?: string;
     launchDir: patch.launchDir !== undefined ? patch.launchDir : g.launchDir,
     launchCmd: patch.launchCmd !== undefined ? patch.launchCmd : g.launchCmd,
     autostart: patch.autostart ?? g.autostart,
+    publicAccess: patch.publicAccess ?? g.publicAccess,
+    funnelPort: patch.funnelPort ?? g.funnelPort,
   });
-  db.prepare(`UPDATE games SET launch_dir = ?, launch_cmd = ?, autostart = ? WHERE id = ?`).run(launch.launchDir, launch.launchCmd, Number(launch.autostart), id);
+  checkFunnelPortFree(id, launch);
+  db.prepare(`UPDATE games SET launch_dir = ?, launch_cmd = ?, autostart = ?, public_access = ?, funnel_port = ? WHERE id = ?`).run(
+    launch.launchDir,
+    launch.launchCmd,
+    Number(launch.autostart),
+    Number(launch.publicAccess),
+    launch.funnelPort,
+    id,
+  );
   db.prepare(`UPDATE games SET name = ?, base_url = ?, enabled = ?, secret = ? WHERE id = ?`).run(
     patch.name?.trim().slice(0, 60) || g.name,
     patch.baseUrl !== undefined ? normalizeUrl(patch.baseUrl) : g.baseUrl,
@@ -149,41 +191,6 @@ export function updateGame(id: number, patch: { name?: string; baseUrl?: string;
     id,
   );
   return getGame(id)!;
-}
-
-/**
- * Writes HUB_URL and HUB_SECRET into the game's .env (in its server folder), keeping everything else.
- * Creates the .env from .env.example if there isn't one yet. The game picks them up on its next start.
- */
-export function writeGameEnv(id: number): { path: string; created: boolean } {
-  const g = getGame(id);
-  if (!g) throw new GameInputError("Game not found");
-  if (!g.launchDir) throw new GameInputError("Set the game's server folder first");
-  const path = resolve(g.launchDir, ".env");
-  let created = false;
-  if (!existsSync(path)) {
-    const example = resolve(g.launchDir, ".env.example");
-    if (existsSync(example)) copyFileSync(example, path);
-    else writeFileSync(path, "");
-    created = true;
-  }
-  const text = readFileSync(path, "utf8");
-  const eol = text.includes("\r\n") ? "\r\n" : "\n";
-  const lines = text.split(/\r?\n/);
-  while (lines.length && lines[lines.length - 1] === "") lines.pop();
-  const values = { HUB_URL: `http://127.0.0.1:${config.port}`, HUB_SECRET: g.secret };
-  let headerAdded = false;
-  for (const [key, value] of Object.entries(values)) {
-    const i = lines.findIndex((l) => new RegExp(`^\\s*${key}\\s*=`).test(l));
-    if (i >= 0) lines[i] = `${key}=${value}`;
-    else {
-      if (!headerAdded) lines.push("", "# LucidHub connection (written by LucidHub)");
-      headerAdded = true;
-      lines.push(`${key}=${value}`);
-    }
-  }
-  writeFileSync(path, lines.join(eol) + eol);
-  return { path, created };
 }
 
 /** Reveals a game's shared secret, for pasting into that game's .env. */

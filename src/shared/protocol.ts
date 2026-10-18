@@ -68,6 +68,8 @@ export interface GameRow {
   launchDir: string | null;
   launchCmd: string | null;
   autostart: boolean;
+  publicAccess: boolean;
+  funnelPort: number;
 }
 
 export type ServerState = "stopped" | "starting" | "running" | "stopping" | "crashed";
@@ -84,6 +86,10 @@ export interface ServerStatus {
   /** Crash restarts in the last 10 minutes. */
   recentRestarts: number;
   message: string | null;
+  /** Where players reach the game (the Funnel address when it is public, else this PC only). */
+  publicUrl: string | null;
+  /** Set when Tailscale needs a one-time approval in the browser before the game can go public. */
+  approveUrl: string | null;
 }
 
 export interface PrizeRule {

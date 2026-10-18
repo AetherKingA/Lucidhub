@@ -6,6 +6,9 @@
   "engines": {
     "node": ">=24"
   },
+  "workspaces": [
+    "games/*"
+  ],
   "scripts": {
     "start": "npm run build && node --disable-warning=ExperimentalWarning src/server/index.ts",
     "serve": "node --disable-warning=ExperimentalWarning src/server/index.ts",
@@ -14,7 +17,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "dev-login": "node --disable-warning=ExperimentalWarning scripts/dev-login.ts"
+    "dev-login": "node --disable-warning=ExperimentalWarning scripts/dev-login.ts",
+    "test:all": "vitest run && npm test --workspaces --if-present",
+    "typecheck:all": "tsc --noEmit && npm run typecheck --workspaces --if-present"
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.3",

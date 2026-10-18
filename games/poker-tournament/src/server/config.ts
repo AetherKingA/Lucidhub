@@ -3,12 +3,14 @@ import { resolve } from "node:path";
 
 export const ROOT = resolve(import.meta.dirname, "../..");
 
+// LucidHub runs this server and passes every setting as an environment variable (see README.md).
+// A .env here is only for running it on its own while developing; the hub's settings win over it.
 const envFile = resolve(ROOT, ".env");
 if (existsSync(envFile)) process.loadEnvFile(envFile);
 
 const env = (name: string, fallback?: string): string => {
   const v = process.env[name]?.trim() || fallback;
-  if (v === undefined) throw new Error(`Missing ${name} in .env (see .env.example and SETUP.md)`);
+  if (v === undefined) throw new Error(`Missing ${name}. LucidHub provides it when it runs Poker Night (see README.md).`);
   return v;
 };
 
@@ -29,8 +31,8 @@ export const config = {
   sessionDays: Number(env("SESSION_DAYS", "30")),
   /** Tailscale Funnel proxies requests, so the real client IP comes from X-Forwarded-For. */
   trustProxy: env("TRUST_PROXY", "true") === "true",
-  keepAwake: env("KEEP_AWAKE", "true") === "true",
-  dbPath: resolve(ROOT, env("DB_PATH", "data/poker.db")),
+  /** In the hub's data folder (event-hub/data/games/poker), where LucidHub keeps every game's data. */
+  dbPath: resolve(ROOT, env("DB_PATH", "../../data/games/poker/poker.db")),
   distDir: resolve(ROOT, "dist"),
   /** Event Hub (the admin dashboard that hands out prizes). The integration is off while the secret is empty. */
   hub: {

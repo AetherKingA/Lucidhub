@@ -138,6 +138,9 @@ function addColumn(table: string, column: string, definition: string) {
 addColumn("games", "launch_dir", "TEXT");
 addColumn("games", "launch_cmd", "TEXT");
 addColumn("games", "autostart", "INTEGER NOT NULL DEFAULT 0");
+// Open the game to the internet with Tailscale Funnel while it runs, and on which public HTTPS port.
+addColumn("games", "public_access", "INTEGER NOT NULL DEFAULT 0");
+addColumn("games", "funnel_port", "INTEGER NOT NULL DEFAULT 443");
 
 /** Runs fn in a transaction; rolls back if it throws. */
 export function tx<T>(fn: () => T): T {

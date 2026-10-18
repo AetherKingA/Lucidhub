@@ -139,34 +139,6 @@ describe("ProcessManager", { timeout: 40_000 }, () => {
   });
 });
 
-describe("writeGameEnv", () => {
-  it("sets HUB_URL and HUB_SECRET, keeping the rest of the file and its line endings", async () => {
-    const { writeGameEnv } = await import("../src/server/games.ts");
-    const { readFileSync } = await import("node:fs");
-    const gameDir = mkdtempSync(join(tmpdir(), "hub-env-"));
-    writeFileSync(join(gameDir, ".env"), "PUBLIC_URL=https://x\r\nHUB_SECRET=old\r\n# keep me\r\n");
-    const g = addGame({ key: "envgame", name: "Env", baseUrl: "http://127.0.0.1:1", secret: "newsecret", launchDir: gameDir, launchCmd: "x" });
-    expect(writeGameEnv(g.id).created).toBe(false);
-    const text = readFileSync(join(gameDir, ".env"), "utf8");
-    expect(text).toContain("PUBLIC_URL=https://x\r\nHUB_SECRET=newsecret\r\n# keep me\r\n");
-    expect(text).toMatch(/HUB_URL=http:\/\/127\.0\.0\.1:\d+\r\n$/);
-    expect(text).not.toContain("old");
-    // Running it again changes nothing.
-    writeGameEnv(g.id);
-    expect(readFileSync(join(gameDir, ".env"), "utf8")).toBe(text);
-  });
-
-  it("creates the .env from .env.example when there isn't one", async () => {
-    const { writeGameEnv } = await import("../src/server/games.ts");
-    const { readFileSync } = await import("node:fs");
-    const gameDir = mkdtempSync(join(tmpdir(), "hub-env-"));
-    writeFileSync(join(gameDir, ".env.example"), "DISCORD_CLIENT_ID=\n");
-    const g = addGame({ key: "envgame2", name: "Env2", baseUrl: "http://127.0.0.1:1", secret: "s2", launchDir: gameDir, launchCmd: "x" });
-    expect(writeGameEnv(g.id).created).toBe(true);
-    expect(readFileSync(join(gameDir, ".env"), "utf8")).toMatch(/^DISCORD_CLIENT_ID=\n\n# LucidHub connection.*\nHUB_URL=.*\nHUB_SECRET=s2\n$/);
-  });
-});
-
 describe("gameEnv", () => {
   it("keeps the hub's own settings and secrets away from game servers", async () => {
     const { gameEnv } = await import("../src/server/processes.ts");
@@ -183,5 +155,18 @@ describe("windowsProgramPath", () => {
     expect(windowsProgramPath('"C:/Program Files/x.exe" y', "win32")).toBe('"C:\\Program Files\\x.exe" y');
     expect(windowsProgramPath("npm start", "win32")).toBe("npm start");
     expect(windowsProgramPath("scripts/run.sh", "linux")).toBe("scripts/run.sh");
+  });
+});
+
+describe("gameEnvFor", () => {
+  it("hands a game its port, public address, Discord login, hub secret and own database", async () => {
+    const { gameEnvFor } = await import("../src/server/processes.ts");
+    const g = addGame({ key: "envfor", name: "EnvFor", baseUrl: "http://127.0.0.1:4321", secret: "game-secret" });
+    const env = gameEnvFor(g, "https://pc.tail1.ts.net", { PATH: "/bin", DISCORD_BOT_TOKEN: "bot", DB_PATH: "hub.db", PORT: "3100" });
+    expect(env).toMatchObject({ PATH: "/bin", PORT: "4321", PUBLIC_URL: "https://pc.tail1.ts.net", HUB_SECRET: "game-secret", ADMIN_DISCORD_IDS: "100", KEEP_AWAKE: "false" });
+    expect(env.HUB_URL).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+    const { sep } = await import("node:path");
+    expect(env.DB_PATH!.split(sep).slice(-4)).toEqual(["data", "games", "envfor", "envfor.db"]);
+    expect(env.DISCORD_BOT_TOKEN).toBeUndefined();
   });
 });

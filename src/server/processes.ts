@@ -7,10 +7,11 @@ import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { ServerState, ServerStatus } from "../shared/protocol.ts";
 import { raiseAlert } from "./alerts.ts";
-import { config } from "./config.ts";
+import { ROOT, config } from "./config.ts";
 import { audit } from "./db.ts";
-import { type Game, GameRequestError, gameClient, getGame, listGames } from "./games.ts";
+import { type Game, GameRequestError, gameClient, getGame, listGames, localPort } from "./games.ts";
 import { syncGame } from "./sync.ts";
+import { closeFunnel, openFunnel } from "./tailscale.ts";
 
 const LOG_LINES = 400;
 /** How long a game gets to save and exit after the hub asks it to, before it's force-stopped. */
@@ -45,6 +46,29 @@ export function gameEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEn
   return env;
 }
 
+/** Each game keeps its data under the hub's data folder, so one folder holds everything to back up. */
+const gameDataDir = (key: string) => resolve(config.dbPath === ":memory:" ? resolve(ROOT, "data") : dirname(config.dbPath), "games", key);
+
+/**
+ * Everything a game server needs, handed over by the hub, so games have no settings file of their own
+ * (INTEGRATION.md lists these). Players sign in with the same Discord application as the dashboard.
+ */
+export function gameEnvFor(game: Game, publicUrl: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return {
+    ...gameEnv(base),
+    PORT: String(localPort(game)),
+    PUBLIC_URL: publicUrl,
+    DISCORD_CLIENT_ID: config.discord.clientId,
+    DISCORD_CLIENT_SECRET: config.discord.clientSecret,
+    ADMIN_DISCORD_IDS: [...config.adminDiscordIds].join(","),
+    HUB_URL: `http://127.0.0.1:${config.port}`,
+    HUB_SECRET: game.secret,
+    DB_PATH: resolve(gameDataDir(game.key), `${game.key}.db`),
+    // The hub keeps the PC awake while it runs.
+    KEEP_AWAKE: "false",
+  };
+}
+
 interface Managed {
   child: ChildProcess | null;
   state: ServerState;
@@ -61,6 +85,12 @@ interface Managed {
   exited: Promise<void> | null;
   /** Running, but not started by this hub (its own start.bat, or left over after the hub was killed). */
   external: boolean;
+  /** Where players reach it; the Funnel address when public. */
+  publicUrl: string | null;
+  /** Tailscale's one-time approval link, when it asked for one. */
+  approveUrl: string | null;
+  /** The Funnel this hub opened for it (closed again when it stops). */
+  funnelPort: number | null;
 }
 
 export class ProcessManager {
@@ -77,7 +107,7 @@ export class ProcessManager {
   private entry(gameId: number): Managed {
     let m = this.servers.get(gameId);
     if (!m) {
-      m = { child: null, state: "stopped", startedAt: null, exitCode: null, ready: false, message: null, wanted: false, restarts: [], restartTimer: null, log: [], logFile: null, exited: null, external: false };
+      m = { child: null, state: "stopped", startedAt: null, exitCode: null, ready: false, message: null, wanted: false, restarts: [], restartTimer: null, log: [], logFile: null, exited: null, external: false, publicUrl: null, approveUrl: null, funnelPort: null };
       this.servers.set(gameId, m);
     }
     return m;
@@ -95,6 +125,8 @@ export class ProcessManager {
       exitCode: m.exitCode,
       recentRestarts: m.restarts.filter((t) => now - t < RESTART_WINDOW_MS).length,
       message: m.message,
+      publicUrl: m.publicUrl,
+      approveUrl: m.approveUrl,
     };
   }
 
@@ -137,8 +169,44 @@ export class ProcessManager {
     if (m.restartTimer) clearTimeout(m.restartTimer);
     m.restartTimer = null;
     m.wanted = true;
+    this.openLog(game, m);
+    await this.openPublicAccess(game, m);
     this.spawn(game, m);
     audit(actor, "server started", game.name);
+  }
+
+  /** Opens the Funnel for a public game. Problems don't stop the game; it just stays local-only. */
+  private async openPublicAccess(game: Game, m: Managed) {
+    const local = `http://localhost:${localPort(game)}`;
+    m.approveUrl = null;
+    if (!game.publicAccess) {
+      m.publicUrl = local;
+      return;
+    }
+    this.append(m, `--- Opening Tailscale Funnel on public port ${game.funnelPort} ---`);
+    const r = await openFunnel(localPort(game), game.funnelPort);
+    if (r.ok) {
+      m.publicUrl = r.url;
+      m.funnelPort = game.funnelPort;
+      this.append(m, `--- Players can reach ${game.name} at ${r.url} ---`);
+      return;
+    }
+    // Keep the public address when it's known, so the Discord redirect stays right once Funnel works.
+    m.publicUrl = r.url ?? local;
+    m.approveUrl = r.approveUrl ?? null;
+    this.append(m, `--- ${r.reason}${r.approveUrl ? ` Approve it here, then restart: ${r.approveUrl}` : ""} ---`);
+    raiseAlert(
+      `funnel:${game.id}`,
+      `**${game.name}** is running, but players can't reach it yet: ${r.reason}${r.approveUrl ? ` Approve it here, then press Restart in LucidHub: ${r.approveUrl}` : ""}`,
+    );
+  }
+
+  private async closePublicAccess(m: Managed) {
+    if (m.funnelPort === null) return;
+    const port = m.funnelPort;
+    m.funnelPort = null;
+    await closeFunnel(port).catch(() => {});
+    this.append(m, `--- Closed Tailscale Funnel on public port ${port} ---`);
   }
 
   private spawn(game: Game, m: Managed) {
@@ -150,6 +218,7 @@ export class ProcessManager {
     this.openLog(game, m);
     this.append(m, `--- Starting ${game.name}: ${game.launchCmd} (in ${game.launchDir}) ---`);
 
+    const env = gameEnvFor(game, m.publicUrl ?? `http://localhost:${localPort(game)}`);
     const isWin = process.platform === "win32";
     const child = isWin
       ? spawn(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", `"${game.launchCmd}"`], {
@@ -157,9 +226,9 @@ export class ProcessManager {
           windowsHide: true,
           windowsVerbatimArguments: true,
           stdio: ["ignore", "pipe", "pipe"],
-          env: gameEnv(),
+          env,
         })
-      : spawn("sh", ["-c", game.launchCmd!], { cwd: game.launchDir!, stdio: ["ignore", "pipe", "pipe"], env: gameEnv() });
+      : spawn("sh", ["-c", game.launchCmd!], { cwd: game.launchDir!, stdio: ["ignore", "pipe", "pipe"], env });
     m.child = child;
 
     let pending = "";
@@ -252,6 +321,7 @@ export class ProcessManager {
     const child = m.child;
     if (!child) {
       if (m.external && game) await this.stopExternal(game, m, actor);
+      await this.closePublicAccess(m);
       m.state = "stopped";
       return;
     }
@@ -273,6 +343,7 @@ export class ProcessManager {
       killTree(child);
       await Promise.race([exited, new Promise((r) => setTimeout(r, 5000))]);
     }
+    await this.closePublicAccess(m);
     m.state = "stopped";
     m.ready = false;
     if (game) audit(actor, "server stopped", game.name);

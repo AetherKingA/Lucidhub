@@ -8,7 +8,6 @@ import { registerAuthRoutes } from "./auth.ts";
 import { config, discordConfigured } from "./config.ts";
 import { db } from "./db.ts";
 import { registerIntegrationRoutes } from "./integration.ts";
-import { keepAwake } from "./keepAwake.ts";
 import { Realtime } from "./realtime.ts";
 import { registerTournamentRoutes } from "./routes.ts";
 import { TournamentManager } from "./tournament/manager.ts";
@@ -44,8 +43,6 @@ if (hasBuild) {
   );
 }
 
-const awake = config.keepAwake ? keepAwake() : null;
-
 let shuttingDown = false;
 async function shutdown(signal: string) {
   if (shuttingDown) return;
@@ -56,7 +53,6 @@ async function shutdown(signal: string) {
     await app.close();
   } finally {
     db.close();
-    awake?.kill();
     console.log("[server] Stopped cleanly.");
     process.exit(0);
   }
@@ -71,7 +67,6 @@ console.log("");
 console.log("  Poker server is running");
 console.log(`  Local:   http://localhost:${config.port}`);
 console.log(`  Public:  ${config.publicUrl}`);
-if (!discordConfigured) console.log("  WARNING: Discord login is not configured yet. See SETUP.md.");
+if (!discordConfigured) console.log("  WARNING: Discord login is not configured. Fill in DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET in LucidHub's .env.");
 if (!hasBuild) console.log("  WARNING: No website build found (run npm run build).");
-console.log("  Press Ctrl+C or close this window to stop.");
 console.log("");

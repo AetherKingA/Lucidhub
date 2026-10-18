@@ -14,7 +14,7 @@ export function GamesPage() {
 
   return (
     <>
-      <PageHeader title="Games" sub="Every game site plugs into LucidHub with a shared secret. LucidHub can also run each game's server for you — start it with the hub and forget about it.">
+      <PageHeader title="Games" sub="Your games run from LucidHub: it starts their servers, hands them their settings, opens them to players, and pays out their winners.">
         {!adding && (
           <button className="btn primary" onClick={() => setAdding(true)}>
             + Connect a game
@@ -40,22 +40,38 @@ export function GamesPage() {
   );
 }
 
+// ---------------------------------------------------------------- launch settings
+
+interface Launch {
+  launchDir: string;
+  launchCmd: string;
+  autostart: boolean;
+  publicAccess: boolean;
+  funnelPort: number;
+}
+
+type Suggestion = { launchDir?: string; launchCmd?: string; publicAccess?: boolean };
+
+/** Fills in the launch settings for a game LucidHub knows (Poker Night in games/). */
+function useSuggestion(key: string, skip: boolean, apply: (s: Suggestion) => void) {
+  useEffect(() => {
+    if (skip || !key) return;
+    void api<Suggestion>(`/api/games/suggest?key=${encodeURIComponent(key)}`).then((s) => {
+      if (s.launchDir) apply(s);
+    });
+  }, [key, skip]);
+}
+
 function AddGame({ onDone }: { onDone: () => void }) {
   const [key, setKey] = useState("poker");
   const [name, setName] = useState("Poker Night");
   const [baseUrl, setBaseUrl] = useState("http://127.0.0.1:3000");
-  const [launchDir, setLaunchDir] = useState("");
-  const [launchCmd, setLaunchCmd] = useState("");
-  const [autostart, setAutostart] = useState(true);
+  const [launch, setLaunch] = useState<Launch>({ launchDir: "", launchCmd: "", autostart: true, publicAccess: false, funnelPort: 443 });
   const { busy, run } = useAction();
 
-  // Poker Night sitting next to the hub is found automatically.
-  useEffect(() => {
-    void api<{ launchDir?: string; launchCmd?: string }>(`/api/games/suggest?key=${encodeURIComponent(key)}`).then((s) => {
-      if (s.launchDir) setLaunchDir((v) => v || s.launchDir!);
-      if (s.launchCmd) setLaunchCmd((v) => v || s.launchCmd!);
-    });
-  }, [key]);
+  useSuggestion(key, false, (s) =>
+    setLaunch((l) => ({ ...l, launchDir: l.launchDir || s.launchDir!, launchCmd: l.launchCmd || s.launchCmd!, publicAccess: s.publicAccess ?? l.publicAccess })),
+  );
 
   return (
     <section className="card panel">
@@ -74,23 +90,12 @@ function AddGame({ onDone }: { onDone: () => void }) {
           <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
         </label>
       </div>
-      <LaunchFields dir={launchDir} cmd={launchCmd} autostart={autostart} onDir={setLaunchDir} onCmd={setLaunchCmd} onAutostart={setAutostart} />
+      <LaunchFields value={launch} onChange={setLaunch} />
       <div className="row end">
         <button className="btn ghost" onClick={onDone}>
           Cancel
         </button>
-        <button
-          className="btn primary"
-          disabled={busy}
-          onClick={() =>
-            run(async () => {
-              const g = await api<GameRow>("/api/games", { body: { key, name, baseUrl, launchDir, launchCmd, autostart } });
-              // Point the game at the hub straight away, so connecting is one click.
-              if (g.launchDir) await api(`/api/games/${g.id}/write-env`, { body: {} }).catch(() => {});
-              onDone();
-            }, "Game connected")
-          }
-        >
+        <button className="btn primary" disabled={busy} onClick={() => run(async () => { await api<GameRow>("/api/games", { body: { key, name, baseUrl, ...launch } }); onDone(); }, "Game connected")}>
           Connect
         </button>
       </div>
@@ -98,34 +103,81 @@ function AddGame({ onDone }: { onDone: () => void }) {
   );
 }
 
-function LaunchFields(p: {
-  dir: string;
-  cmd: string;
-  autostart: boolean;
-  onDir: (v: string) => void;
-  onCmd: (v: string) => void;
-  onAutostart: (v: boolean) => void;
-}) {
+function LaunchFields({ value: v, onChange }: { value: Launch; onChange: (l: Launch) => void }) {
+  const set = (patch: Partial<Launch>) => onChange({ ...v, ...patch });
   return (
     <div className="launch">
-      <h4>Run its server from LucidHub (optional)</h4>
+      <h4>Run its server from LucidHub</h4>
       <div className="form-grid">
         <label className="wide">
           <span>Server folder (full path)</span>
-          <input className="mono" value={p.dir} onChange={(e) => p.onDir(e.target.value)} placeholder="C:\…\poker-tournament" />
+          <input className="mono" value={v.launchDir} onChange={(e) => set({ launchDir: e.target.value })} placeholder="C:\…\event-hub\games\poker-tournament" />
         </label>
         <label className="wide">
           <span>Start command, run in that folder</span>
-          <input className="mono" value={p.cmd} onChange={(e) => p.onCmd(e.target.value)} placeholder="scripts\hub-start.cmd" />
+          <input className="mono" value={v.launchCmd} onChange={(e) => set({ launchCmd: e.target.value })} placeholder="npm start" />
         </label>
       </div>
       <label className="check">
-        <input type="checkbox" checked={p.autostart} onChange={(e) => p.onAutostart(e.target.checked)} disabled={!p.dir} />
+        <input type="checkbox" checked={v.autostart} onChange={(e) => set({ autostart: e.target.checked })} disabled={!v.launchDir} />
         Start it whenever LucidHub starts, and restart it if it crashes
+      </label>
+      <label className="check">
+        <input type="checkbox" checked={v.publicAccess} onChange={(e) => set({ publicAccess: e.target.checked })} disabled={!v.launchDir} />
+        Open it to players on the internet (Tailscale Funnel)
+        {v.publicAccess && (
+          <select className="inline-select" value={v.funnelPort} onChange={(e) => set({ funnelPort: Number(e.target.value) })}>
+            <option value={443}>on the main address</option>
+            <option value={8443}>on port 8443</option>
+            <option value={10000}>on port 10000</option>
+          </select>
+        )}
       </label>
     </div>
   );
 }
+
+function LaunchEditor({ game, onDone }: { game: GameRow; onDone: () => void }) {
+  const [launch, setLaunch] = useState<Launch>({
+    launchDir: game.launchDir ?? "",
+    launchCmd: game.launchCmd ?? "",
+    autostart: game.launchDir ? game.autostart : true,
+    publicAccess: game.publicAccess,
+    funnelPort: game.funnelPort,
+  });
+  const { busy, run } = useAction();
+
+  useSuggestion(game.key, Boolean(game.launchDir), (s) =>
+    setLaunch((l) => ({ ...l, launchDir: l.launchDir || s.launchDir!, launchCmd: l.launchCmd || s.launchCmd!, publicAccess: s.publicAccess ?? l.publicAccess })),
+  );
+
+  return (
+    <div className="setup-box">
+      <LaunchFields value={launch} onChange={setLaunch} />
+      <p className="muted small">Changes apply the next time the server starts — press Restart after saving.</p>
+      <div className="row end">
+        {game.launchDir && (
+          <button
+            className="link danger"
+            onClick={() =>
+              run(async () => {
+                await api(`/api/games/${game.id}`, { method: "PATCH", body: { launchDir: null, launchCmd: null, autostart: false, publicAccess: false } });
+                onDone();
+              }, "LucidHub won't run this server any more")
+            }
+          >
+            Stop running it from LucidHub
+          </button>
+        )}
+        <button className="btn primary small-btn" disabled={busy} onClick={() => run(async () => { await api(`/api/games/${game.id}`, { method: "PATCH", body: launch }); onDone(); }, "Saved")}>
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- one game
 
 const STATE_LABEL: Record<ServerState, string> = {
   stopped: "Stopped",
@@ -136,15 +188,12 @@ const STATE_LABEL: Record<ServerState, string> = {
 };
 
 function GameCard({ game, server, onServerChange }: { game: GameRow; server: ServerStatus | null; onServerChange: () => void }) {
-  const { reload, toast } = useHub();
-  const [secret, setSecret] = useState<string | null>(null);
+  const { reload } = useHub();
   const [info, setInfo] = useState<GameInfo | null>(null);
   const [editing, setEditing] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const { busy, run } = useAction();
   const online = !game.lastError && game.lastOkAt;
-  const hubUrl = game.webhookUrl.replace(/\/api\/games\/.*$/, "");
-  const envLines = secret ? `HUB_URL=${hubUrl}\nHUB_SECRET=${secret}` : null;
   const managed = Boolean(game.launchDir && game.launchCmd);
   const state = server?.state ?? "stopped";
   const live = state === "starting" || state === "running" || state === "stopping";
@@ -190,34 +239,11 @@ function GameCard({ game, server, onServerChange }: { game: GameRow; server: Ser
           >
             Test connection
           </button>
-          <button className="btn ghost small-btn" onClick={() => run(async () => setSecret(secret ? null : (await api<{ secret: string }>(`/api/games/${game.id}/secret`)).secret))}>
-            {secret ? "Hide setup" : "Show setup"}
-          </button>
           <button className="link" onClick={() => run(async () => { await api(`/api/games/${game.id}`, { method: "PATCH", body: { enabled: !game.enabled } }); await reload(); })}>
             {game.enabled ? "Disable" : "Enable"}
           </button>
         </div>
       </div>
-
-      {envLines && (
-        <div className="setup-box">
-          <p className="small">
-            The game needs these two lines in its <code>.env</code>.{" "}
-            {managed ? "LucidHub can write them for you — then restart the server." : "Paste them in, then restart the game."} Keep the secret private.
-          </p>
-          <pre className="mono">{envLines}</pre>
-          <div className="row">
-            <button className="btn ghost small-btn" onClick={() => void navigator.clipboard.writeText(envLines).then(() => toast("Copied"))}>
-              Copy
-            </button>
-            {managed && (
-              <button className="btn ghost small-btn" disabled={busy} onClick={() => run(() => api(`/api/games/${game.id}/write-env`, { body: {} }), "Saved to the game's .env")}>
-                Write to {game.name}'s .env
-              </button>
-            )}
-          </div>
-        </div>
-      )}
       {info && <p className="muted small">Game reports: {info.name}, {info.fields.length} event options.</p>}
 
       <div className="server">
@@ -229,9 +255,10 @@ function GameCard({ game, server, onServerChange }: { game: GameRow; server: Ser
                 <span className={`pill srv-${state}`}>{STATE_LABEL[state]}</span>
                 {live && server?.startedAt && <span className="muted small">up {fmtAgo(server.startedAt).replace(" ago", "")}</span>}
                 {game.autostart && <span className="muted small">· starts with LucidHub</span>}
+                {game.publicAccess && <span className="muted small">· open to players</span>}
               </>
             ) : (
-              <span className="muted small">Not run by LucidHub — start it yourself (e.g. its start.bat).</span>
+              <span className="muted small">Not run by LucidHub yet — click Set up.</span>
             )}
           </div>
           <div className="row">
@@ -265,6 +292,17 @@ function GameCard({ game, server, onServerChange }: { game: GameRow; server: Ser
           </div>
         </div>
         {server?.message && <p className={`small ${state === "crashed" ? "bad" : "warn"}`}>{server.message}</p>}
+        {server?.approveUrl && (
+          <p className="notice waiting_stock small">
+            Tailscale needs a one-time OK before players can reach {game.name}.{" "}
+            <a href={server.approveUrl} target="_blank" rel="noreferrer">
+              Approve it here ↗
+            </a>
+            , then press Restart.
+          </p>
+        )}
+        {live && server?.publicUrl && <PublicAddress name={game.name} url={server.publicUrl} isPublic={game.publicAccess} />}
+        {!managed && !editing && <ExternalSetup game={game} />}
         {editing && <LaunchEditor game={game} onDone={() => { setEditing(false); void reload(); }} />}
         {showLog && managed && <ServerLog gameId={game.id} />}
       </div>
@@ -272,34 +310,53 @@ function GameCard({ game, server, onServerChange }: { game: GameRow; server: Ser
   );
 }
 
-function LaunchEditor({ game, onDone }: { game: GameRow; onDone: () => void }) {
-  const [dir, setDir] = useState(game.launchDir ?? "");
-  const [cmd, setCmd] = useState(game.launchCmd ?? "");
-  const [autostart, setAutostart] = useState(game.launchDir ? game.autostart : true);
-  const { busy, run } = useAction();
-
-  useEffect(() => {
-    if (game.launchDir) return;
-    void api<{ launchDir?: string; launchCmd?: string }>(`/api/games/suggest?key=${encodeURIComponent(game.key)}`).then((s) => {
-      if (s.launchDir) setDir((v) => v || s.launchDir!);
-      if (s.launchCmd) setCmd((v) => v || s.launchCmd!);
-    });
-  }, [game.key, game.launchDir]);
-
+/** For a game running somewhere LucidHub doesn't start it: the two settings it needs. */
+function ExternalSetup({ game }: { game: GameRow }) {
+  const { toast } = useHub();
+  const [secret, setSecret] = useState<string | null>(null);
+  const { run } = useAction();
+  if (!secret)
+    return (
+      <p className="muted small">
+        Running it somewhere else?{" "}
+        <button className="link" onClick={() => run(async () => setSecret((await api<{ secret: string }>(`/api/games/${game.id}/secret`)).secret))}>
+          Show the settings it needs
+        </button>
+      </p>
+    );
+  const lines = `HUB_URL=${new URL(game.webhookUrl).origin}\nHUB_SECRET=${secret}`;
   return (
     <div className="setup-box">
-      <LaunchFields dir={dir} cmd={cmd} autostart={autostart} onDir={setDir} onCmd={setCmd} onAutostart={setAutostart} />
-      <div className="row end">
-        {game.launchDir && (
-          <button
-            className="link danger"
-            onClick={() => run(async () => { await api(`/api/games/${game.id}`, { method: "PATCH", body: { launchDir: null, launchCmd: null, autostart: false } }); onDone(); }, "LucidHub won't run this server any more")}
-          >
-            Stop running it from LucidHub
-          </button>
-        )}
-        <button className="btn primary small-btn" disabled={busy} onClick={() => run(async () => { await api(`/api/games/${game.id}`, { method: "PATCH", body: { launchDir: dir, launchCmd: cmd, autostart } }); onDone(); }, "Saved")}>
-          Save
+      <p className="small">Give the game these settings, then restart it. Keep the secret private.</p>
+      <pre className="mono">{lines}</pre>
+      <button className="btn ghost small-btn" onClick={() => void navigator.clipboard.writeText(lines).then(() => toast("Copied"))}>
+        Copy
+      </button>
+    </div>
+  );
+}
+
+/** Where players go, and the Discord redirect that address needs for "Sign in with Discord". */
+function PublicAddress({ name, url, isPublic }: { name: string; url: string; isPublic: boolean }) {
+  const { toast } = useHub();
+  const redirect = `${url}/auth/discord/callback`;
+  return (
+    <div className="setup-box small">
+      <div className="row between">
+        <span>
+          {isPublic ? "Players" : "This PC only"}:{" "}
+          <a href={url} target="_blank" rel="noreferrer" className="mono">
+            {url}
+          </a>
+        </span>
+      </div>
+      <p className="muted" style={{ margin: "8px 0 4px" }}>
+        For {name}'s “Sign in with Discord”, this redirect must be in your Discord application (Developer Portal → OAuth2 → Redirects):
+      </p>
+      <div className="row">
+        <code className="mono">{redirect}</code>
+        <button className="btn ghost small-btn" onClick={() => void navigator.clipboard.writeText(redirect).then(() => toast("Copied"))}>
+          Copy
         </button>
       </div>
     </div>

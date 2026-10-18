@@ -4,5 +4,3 @@ data/
 .env
 *.log
 
-# Each game in games/ is its own project with its own git repo (games/poker-tournament, later chess...).
-games/
