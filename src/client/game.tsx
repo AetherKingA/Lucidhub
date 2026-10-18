@@ -97,6 +97,14 @@ export function GameProvider({ user, children }: { user: UserInfo; children: Rea
           "success",
         );
         break;
+      case "advanced":
+        notify(
+          msg.round === msg.totalRounds
+            ? "🎉 You won your table! You're through to the final table."
+            : `🎉 You won your table! You're through to round ${msg.round} of ${msg.totalRounds}.`,
+          "success",
+        );
+        break;
       case "error":
         notify(msg.message, "error");
         break;

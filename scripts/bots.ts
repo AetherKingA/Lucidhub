@@ -56,7 +56,7 @@ function startBot(n: number, token = makeSession(n)) {
   ws.on("message", (raw) => {
     const msg = JSON.parse(String(raw)) as ServerMessage;
     if (msg.type === "lobby" && !registered) {
-      const t = msg.tournaments.find((x) => (wantedId ? x.id === wantedId : x.lateRegOpen) && x.lateRegOpen);
+      const t = msg.tournaments.find((x) => (wantedId ? x.id === wantedId : x.registrationOpen) && x.registrationOpen);
       if (t && !t.me?.registered) {
         ws.send(JSON.stringify({ type: "register", tournamentId: t.id }));
         registered = true;

@@ -1,7 +1,7 @@
 import type { TournamentDetail, TournamentSummary } from "../../shared/protocol.ts";
 import { usersSharingIp } from "../db.ts";
 import { insertTournament, loadTournaments, saveBatch, saveResult } from "./store.ts";
-import { defaultConfig, defaultLevels } from "./structure.ts";
+import { PLAYER_CAPS, TABLE_SIZE, defaultConfig, defaultLevels } from "./structure.ts";
 import { Tournament, type TournamentHooks } from "./tournament.ts";
 import type { TournamentConfig } from "./types.ts";
 
@@ -12,6 +12,7 @@ export interface Notifier {
   tableClosed(tournamentId: number, tableId: number): void;
   lobbyChanged(): void;
   playerMoved(tournamentId: number, userId: number, tableId: number): void;
+  playerAdvanced(tournamentId: number, userId: number, round: number, totalRounds: number): void;
   playerFinished(tournamentId: number, userId: number, place: number, points: number): void;
 }
 
@@ -21,7 +22,6 @@ export interface CreateOptions {
   startTime: number;
   startingStack?: number;
   levelMinutes?: number;
-  lateRegLevels?: number;
   maxPlayers?: number;
   breakEveryLevels?: number;
   breakMinutes?: number;
@@ -84,8 +84,9 @@ export class TournamentManager {
       startTime: clamp(opts.startTime, now, now + 365 * 86_400_000, now + 30 * 60_000),
       startingStack: clamp(opts.startingStack, 1000, 1_000_000, base.startingStack),
       levels: defaultLevels(clamp(opts.levelMinutes, 1, 60, 10)),
-      lateRegLevels: clamp(opts.lateRegLevels, 0, 30, base.lateRegLevels),
-      maxPlayers: clamp(opts.maxPlayers, 2, 1000, base.maxPlayers),
+      tableSize: TABLE_SIZE,
+      // Snap to the nearest allowed cap (6, 36, 216, 1296) so the bracket collapses evenly.
+      maxPlayers: PLAYER_CAPS.find((c) => c >= Number(opts.maxPlayers)) ?? base.maxPlayers,
       breakEveryLevels: clamp(opts.breakEveryLevels, 0, 30, base.breakEveryLevels),
       breakMinutes: clamp(opts.breakMinutes, 0, 60, base.breakMinutes),
       decisionSeconds: clamp(opts.decisionSeconds, 5, 120, base.decisionSeconds),
@@ -187,6 +188,7 @@ export class TournamentManager {
       tableClosed: (tableId) => n.tableClosed(tournamentId, tableId),
       lobbyChanged: () => n.lobbyChanged(),
       playerMoved: (userId, tableId) => n.playerMoved(tournamentId, userId, tableId),
+      playerAdvanced: (userId, round) => n.playerAdvanced(tournamentId, userId, round, this.tournaments.get(tournamentId)?.meta.totalRounds ?? round),
       playerFinished: (userId, place, points) => {
         saveResult(tournamentId, userId, place, points);
         n.playerFinished(tournamentId, userId, place, points);

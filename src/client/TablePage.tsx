@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Action, SeatView, TableView, TournamentSummary } from "../shared/protocol.ts";
+import type { Action, SeatView, TableView } from "../shared/protocol.ts";
 import { PlayingCard } from "./Cards.tsx";
 import { chips, formatClock, tableKey, useGame, useServerNow } from "./game.tsx";
 
@@ -23,7 +23,7 @@ export function TablePage({ tournamentId, tableId }: { tournamentId: number; tab
           ← {summary?.name ?? "Tournament"}
         </a>
         <span className="muted">Table {tableId}</span>
-        {summary && <LevelClock t={summary} />}
+        {view && <LevelClock view={view} remaining={summary?.remaining ?? 0} />}
         {myTable != null && myTable !== tableId && (
           <a className="btn primary small-btn" href={`#/t/${tournamentId}/table/${myTable}`}>
             Back to my table
@@ -32,7 +32,13 @@ export function TablePage({ tournamentId, tableId }: { tournamentId: number; tab
       </div>
       {!view ? (
         <div className="center muted">
-          {summary?.status === "finished" || summary?.status === "cancelled" ? "This tournament is over." : "This table is closed or loading…"}
+          {summary?.me?.place === 1
+            ? "🏆 You won the tournament!"
+            : summary?.me?.waiting
+              ? `You won this table! You'll move to your round ${summary.me.waiting.round} table when the rest of your group finishes (${summary.me.waiting.groupDone}/${summary.me.waiting.groupSize} tables done).`
+              : summary?.status === "finished" || summary?.status === "cancelled"
+                ? "This tournament is over."
+                : "This table has finished (or is loading)."}
         </div>
       ) : (
         <Table view={view} />
@@ -42,15 +48,16 @@ export function TablePage({ tournamentId, tableId }: { tournamentId: number; tab
 
 }
 
-function LevelClock({ t }: { t: TournamentSummary }) {
+function LevelClock({ view, remaining }: { view: TableView; remaining: number }) {
   const now = useServerNow(500);
-  const left = t.phaseEndsAt !== null ? t.phaseEndsAt - now : t.phaseRemainingMs;
+  const left = view.phaseEndsAt !== null ? view.phaseEndsAt - now : view.phaseRemainingMs;
   return (
     <span className="level-clock">
-      {t.phase === "break" ? "Break" : `Lvl ${t.level + 1}`} · {chips(t.levelInfo.smallBlind)}/{chips(t.levelInfo.bigBlind)}
-      {t.levelInfo.ante > 0 && ` (${chips(t.levelInfo.ante)})`}
-      {left !== null && t.status === "running" && <> · {formatClock(left)}</>}
-      <span className="muted"> · {t.remaining} left</span>
+      {view.round === view.totalRounds ? "Final table" : `Round ${view.round}/${view.totalRounds}`} ·{" "}
+      {view.phase === "break" ? "Break" : `Lvl ${view.levelIndex + 1}`} · {chips(view.level.smallBlind)}/{chips(view.level.bigBlind)}
+      {view.level.ante > 0 && ` (${chips(view.level.ante)})`}
+      {left !== null && <> · {formatClock(left)}</>}
+      <span className="muted"> · {remaining} left in tournament</span>
     </span>
   );
 }

@@ -258,3 +258,8 @@ table.data tr.current td { background: #11301f; }
   .actions { width: 100%; }
   .me-name { display: none; }
 }
+
+/* ---------- bracket rounds ---------- */
+.rounds { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.round { display: flex; flex-direction: column; padding: 10px 14px; flex: 1 1 160px; }
+.round.done { opacity: 0.6; }

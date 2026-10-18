@@ -81,6 +81,11 @@ export class Realtime implements Notifier {
     this.tableChanged(tournamentId, tableId);
   }
 
+  playerAdvanced(tournamentId: number, userId: number, round: number, totalRounds: number) {
+    for (const c of this.byUser.get(userId) ?? []) this.send(c, { type: "advanced", tournamentId, round, totalRounds });
+    this.lobbyChanged();
+  }
+
   playerFinished(tournamentId: number, userId: number, place: number, points: number) {
     for (const c of this.byUser.get(userId) ?? []) this.send(c, { type: "finished", tournamentId, place, points });
   }

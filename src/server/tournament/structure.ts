@@ -1,5 +1,9 @@
 import type { Level, TournamentConfig } from "./types.ts";
 
+export const TABLE_SIZE = 6;
+/** Player caps: powers of 6, so six tables always feed one table in the next round. */
+export const PLAYER_CAPS = [6, 36, 216, 1296] as const;
+
 const BLINDS: [number, number][] = [
   [25, 50], [50, 100], [75, 150], [100, 200], [150, 300], [200, 400], [250, 500], [300, 600],
   [400, 800], [500, 1000], [600, 1200], [800, 1600], [1000, 2000], [1200, 2400], [1500, 3000],
@@ -23,10 +27,9 @@ export function defaultConfig(overrides: Partial<TournamentConfig> = {}): Tourna
     name: "Tournament",
     startTime: Date.now() + 30 * 60_000,
     startingStack: 10_000,
-    tableSize: 9,
-    maxPlayers: 1000,
+    tableSize: TABLE_SIZE,
+    maxPlayers: 1296,
     levels: defaultLevels(),
-    lateRegLevels: 6,
     breakEveryLevels: 6,
     breakMinutes: 5,
     decisionSeconds: 20,
@@ -35,6 +38,22 @@ export function defaultConfig(overrides: Partial<TournamentConfig> = {}): Tourna
     payoutPercent: 15,
     ...overrides,
   };
+}
+
+/**
+ * Number of tables in each round for n players (index 0 = round 1). Round 1 uses as few tables as
+ * possible; each later round has one table per six tables of the round before.
+ * 216 -> [36, 6, 1], 200 -> [34, 6, 1], 40 -> [7, 2, 1], 6 -> [1].
+ */
+export function bracketShape(players: number, tableSize = TABLE_SIZE): number[] {
+  const counts = [Math.max(1, Math.ceil(players / tableSize))];
+  while (counts[counts.length - 1]! > 1) counts.push(Math.ceil(counts[counts.length - 1]! / tableSize));
+  return counts;
+}
+
+/** Splits `total` items into `parts` groups whose sizes differ by at most one. */
+export function evenSplit(total: number, parts: number): number[] {
+  return Array.from({ length: parts }, (_, i) => Math.floor(total / parts) + (i < total % parts ? 1 : 0));
 }
 
 /**

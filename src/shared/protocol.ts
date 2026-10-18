@@ -30,17 +30,22 @@ export interface TournamentSummary {
   remaining: number;
   maxPlayers: number;
   startingStack: number;
-  phase: "level" | "break";
-  /** 0-based level index. */
-  level: number;
-  levelInfo: LevelInfo;
-  nextLevelInfo: LevelInfo | null;
-  /** Epoch ms when the current level/break ends, or null (paused or final level). */
-  phaseEndsAt: number | null;
-  /** Time left in the phase when paused. */
-  phaseRemainingMs: number | null;
-  lateRegOpen: boolean;
-  me: { registered: boolean; tableId: number | null; place: number | null; points: number } | null;
+  /** Earliest round still being played (1-based). Before the start: 1. */
+  round: number;
+  /** Rounds in the bracket (projected from current registrations before the start). */
+  totalRounds: number;
+  activeTables: number;
+  registrationOpen: boolean;
+  firstLevel: LevelInfo;
+  me: {
+    registered: boolean;
+    tableId: number | null;
+    place: number | null;
+    points: number;
+    round: number;
+    /** Set after winning a table, while the rest of the group finishes. */
+    waiting: { round: number; tableId: number; groupDone: number; groupSize: number } | null;
+  } | null;
 }
 
 export interface SeatView {
@@ -82,7 +87,16 @@ export interface TableView {
   decisionMs: number;
   /** When the acting player times out (including their time bank). */
   actionDeadline: number | null;
+  round: number;
+  totalRounds: number;
+  /** This table's own blind clock. */
+  phase: "level" | "break";
+  levelIndex: number;
   level: LevelInfo;
+  nextLevel: LevelInfo | null;
+  /** When the current level/break ends, or null (paused or final level). */
+  phaseEndsAt: number | null;
+  phaseRemainingMs: number | null;
   /** Present only for the viewer whose turn it is. */
   legal: LegalActions | null;
   mySeat: number | null;
@@ -97,12 +111,11 @@ export interface TournamentDetail {
   levels: LevelInfo[];
   breakEveryLevels: number;
   breakMinutes: number;
-  lateRegLevels: number;
   payouts: { place: number; percent: number; points: number }[];
-  tables: { id: number; players: number; handNo: number }[];
-  /** Chip leaders while running; final results when finished. */
-  standings: { userId: number; username: string; chips: number; place: number | null; points: number; tableId: number | null }[];
-  averageStack: number;
+  rounds: { round: number; tables: number; done: number; players: number }[];
+  tables: { id: number; round: number; players: number; handNo: number }[];
+  /** Players still in (furthest round first, then chips), then knocked-out players by place. */
+  standings: { userId: number; username: string; round: number; chips: number; place: number | null; points: number; tableId: number | null }[];
 }
 
 export type ServerMessage =
@@ -114,7 +127,8 @@ export type ServerMessage =
   | { type: "table"; view: TableView }
   | { type: "tableClosed"; tournamentId: number; tableId: number }
   | { type: "moved"; tournamentId: number; tableId: number }
-  | { type: "finished"; tournamentId: number; place: number; points: number };
+  | { type: "finished"; tournamentId: number; place: number; points: number }
+  | { type: "advanced"; tournamentId: number; round: number; totalRounds: number };
 
 export type ClientMessage =
   | { type: "ping"; t: number }

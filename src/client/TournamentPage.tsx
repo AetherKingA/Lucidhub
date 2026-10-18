@@ -27,7 +27,18 @@ export function TournamentPage({ id }: { id: number }) {
     return () => clearInterval(timer);
   }, [load]);
 
-  if (missing) return <main className="page"><p className="muted">That tournament doesn't exist (any more).</p><a href="#/">Back to the lobby</a></main>;
+  // Also refresh straight away when the live summary shows a knockout, a finished table or a new round.
+  useEffect(() => {
+    if (live) load();
+  }, [live?.status, live?.remaining, live?.activeTables, live?.round]);
+
+  if (missing)
+    return (
+      <main className="page">
+        <p className="muted">That tournament doesn't exist (any more).</p>
+        <a href="#/">Back to the lobby</a>
+      </main>
+    );
   const t = live ?? detail?.summary;
   if (!t) return <div className="center muted">Loading…</div>;
   const me = t.me;
@@ -44,13 +55,20 @@ export function TournamentPage({ id }: { id: number }) {
 
       {t.paused && t.pauseReason && <p className="banner">⏸ {t.pauseReason}</p>}
 
-      <ClockPanel t={t} averageStack={detail?.averageStack ?? 0} />
+      <OverviewPanel t={t} now={now} />
 
       <div className="row my-status">
         {me?.place != null ? (
           <span>
-            You finished <b>{ordinal(me.place)}</b>
+            {me.place === 1 ? "🏆 You won the tournament" : <>You finished <b>{ordinal(me.place)}</b></>}
             {me.points ? ` and won ${me.points} points` : ""}.
+          </span>
+        ) : me?.waiting ? (
+          <span className="ok">
+            ✓ You won your table and you're through to round {me.waiting.round}. Your next table starts when the other{" "}
+            {me.waiting.groupSize - me.waiting.groupDone} table{me.waiting.groupSize - me.waiting.groupDone === 1 ? "" : "s"} in your
+            group finish{me.waiting.groupSize - me.waiting.groupDone === 1 ? "es" : ""} ({me.waiting.groupDone}/{me.waiting.groupSize}{" "}
+            done).
           </span>
         ) : me?.tableId != null ? (
           <button className="btn primary" onClick={() => navigate(`/t/${t.id}/table/${me.tableId}`)}>
@@ -65,9 +83,9 @@ export function TournamentPage({ id }: { id: number }) {
               </button>
             )}
           </>
-        ) : t.lateRegOpen && t.entrants < t.maxPlayers ? (
+        ) : t.registrationOpen ? (
           <button className="btn primary" onClick={() => send({ type: "register", tournamentId: t.id })}>
-            {t.status === "running" ? "Late register" : "Register"}
+            Register
           </button>
         ) : null}
       </div>
@@ -82,68 +100,89 @@ export function TournamentPage({ id }: { id: number }) {
 
       {detail && tab === "tables" && <TablesTab t={t} detail={detail} />}
       {detail && tab === "standings" && <StandingsTab detail={detail} />}
-      {detail && tab === "structure" && <StructureTab t={t} detail={detail} />}
+      {detail && tab === "structure" && <StructureTab detail={detail} />}
       {detail && tab === "payouts" && <PayoutsTab detail={detail} />}
       {tab === "admin" && user.isAdmin && <AdminTab t={t} onChange={load} />}
     </main>
   );
 }
 
-function ClockPanel({ t, averageStack }: { t: TournamentSummary; averageStack: number }) {
-  const now = useServerNow(500);
-  const left = t.phaseEndsAt !== null ? t.phaseEndsAt - now : t.phaseRemainingMs;
-  const lvl = t.levelInfo;
+function OverviewPanel({ t, now }: { t: TournamentSummary; now: number }) {
   return (
     <div className="clock card">
-      <div>
-        <div className="label">{t.status === "registering" ? "Starts in" : t.phase === "break" ? "Break ends in" : `Level ${t.level + 1} ends in`}</div>
-        <div className="big">
-          {t.status === "registering" ? formatClock(t.startTime - now) : t.status === "running" && left !== null ? formatClock(left) : "—"}
+      {t.status === "registering" ? (
+        <div>
+          <div className="label">Starts in</div>
+          <div className="big">{formatClock(t.startTime - now)}</div>
         </div>
-      </div>
-      <div>
-        <div className="label">Blinds</div>
-        <div className="big">
-          {chips(lvl.smallBlind)}/{chips(lvl.bigBlind)}
-          {lvl.ante > 0 && <small> ante {chips(lvl.ante)}</small>}
-        </div>
-        {t.nextLevelInfo && (
-          <div className="muted small">
-            Next: {chips(t.nextLevelInfo.smallBlind)}/{chips(t.nextLevelInfo.bigBlind)}
-            {t.nextLevelInfo.ante > 0 && ` ante ${chips(t.nextLevelInfo.ante)}`}
+      ) : (
+        <div>
+          <div className="label">Round</div>
+          <div className="big">
+            {t.status === "running" ? t.round : t.totalRounds} <small>of {t.totalRounds}</small>
           </div>
-        )}
-      </div>
+        </div>
+      )}
       <div>
         <div className="label">Players</div>
-        <div className="big">
-          {t.status === "running" ? `${t.remaining} / ${t.entrants}` : t.entrants}
+        <div className="big">{t.status === "running" ? `${t.remaining} / ${t.entrants}` : t.entrants}</div>
+        <div className="muted small">
+          {t.status === "registering" ? `Cap ${t.maxPlayers.toLocaleString()} · ${t.registrationOpen ? "registration open" : "full"}` : "Registration closed"}
         </div>
-        <div className="muted small">{t.lateRegOpen ? "Registration open" : "Registration closed"}</div>
       </div>
       {t.status === "running" && (
         <div>
-          <div className="label">Average stack</div>
-          <div className="big">{chips(averageStack)}</div>
+          <div className="label">Tables in play</div>
+          <div className="big">{t.activeTables}</div>
         </div>
       )}
+      <div>
+        <div className="label">Every table starts</div>
+        <div className="big">
+          {chips(t.startingStack)} <small>chips</small>
+        </div>
+        <div className="muted small">
+          Blinds {chips(t.firstLevel.smallBlind)}/{chips(t.firstLevel.bigBlind)}, {t.firstLevel.minutes}-min levels
+        </div>
+      </div>
     </div>
   );
 }
 
 function TablesTab({ t, detail }: { t: TournamentSummary; detail: TournamentDetail }) {
-  if (!detail.tables.length) return <p className="muted">{t.status === "registering" ? "Tables are drawn when the tournament starts." : "No tables in play."}</p>;
+  if (t.status === "registering")
+    return (
+      <p className="muted">
+        Tables are drawn when the tournament starts: six players per table, and the winners of every six tables meet at a new table in the
+        next round. With {t.entrants} registered that's {t.totalRounds} round{t.totalRounds === 1 ? "" : "s"}.
+      </p>
+    );
   return (
-    <div className="table-grid">
-      {detail.tables.map((tb) => (
-        <a key={tb.id} className={`card table-tile ${t.me?.tableId === tb.id ? "mine" : ""}`} href={`#/t/${t.id}/table/${tb.id}`}>
-          <b>Table {tb.id}</b>
-          <span className="muted small">
-            {tb.players} players · hand #{tb.handNo}
-          </span>
-        </a>
-      ))}
-    </div>
+    <>
+      <div className="rounds">
+        {detail.rounds.map((r) => (
+          <div key={r.round} className={`card round ${r.done === r.tables ? "done" : ""}`}>
+            <b>{r.round === detail.rounds.length ? "Final table" : `Round ${r.round}`}</b>
+            <span className="muted small">
+              {r.done}/{r.tables} table{r.tables === 1 ? "" : "s"} finished · {r.players} players
+            </span>
+          </div>
+        ))}
+      </div>
+      {!detail.tables.length && <p className="muted">No tables in play.</p>}
+      <div className="table-grid">
+        {detail.tables.map((tb) => (
+          <a key={tb.id} className={`card table-tile ${t.me?.tableId === tb.id ? "mine" : ""}`} href={`#/t/${t.id}/table/${tb.id}`}>
+            <b>
+              Table {tb.id} <span className="muted small">· R{tb.round}</span>
+            </b>
+            <span className="muted small">
+              {tb.players} left · hand #{tb.handNo}
+            </span>
+          </a>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -154,16 +193,18 @@ function StandingsTab({ detail }: { detail: TournamentDetail }) {
         <tr>
           <th>#</th>
           <th>Player</th>
+          <th className="num">Round</th>
           <th className="num">Chips</th>
           <th className="num">Points</th>
         </tr>
       </thead>
       <tbody>
-        {detail.standings.map((s, i) => (
+        {detail.standings.map((s) => (
           <tr key={s.userId} className={s.place !== null ? "out" : ""}>
-            <td>{s.place ?? i + 1}</td>
+            <td>{s.place ?? "—"}</td>
             <td>{s.username}</td>
-            <td className="num">{s.place === null ? chips(s.chips) : "—"}</td>
+            <td className="num">{s.round}</td>
+            <td className="num">{s.place === null && s.tableId !== null ? chips(s.chips) : s.place === null ? "waiting" : "—"}</td>
             <td className="num">{s.points || ""}</td>
           </tr>
         ))}
@@ -172,11 +213,11 @@ function StandingsTab({ detail }: { detail: TournamentDetail }) {
   );
 }
 
-function StructureTab({ t, detail }: { t: TournamentSummary; detail: TournamentDetail }) {
+function StructureTab({ detail }: { detail: TournamentDetail }) {
   return (
     <>
       <p className="muted small">
-        {detail.levels[0]!.minutes}-minute levels · late registration for {detail.lateRegLevels} levels
+        Every table, in every round, starts at level 1 with fresh, equal stacks. {detail.levels[0]!.minutes}-minute levels
         {detail.breakEveryLevels > 0 && detail.breakMinutes > 0 && ` · ${detail.breakMinutes}-minute break every ${detail.breakEveryLevels} levels`}
       </p>
       <table className="data">
@@ -190,7 +231,7 @@ function StructureTab({ t, detail }: { t: TournamentSummary; detail: TournamentD
         </thead>
         <tbody>
           {detail.levels.map((l, i) => (
-            <tr key={i} className={t.status === "running" && i === t.level ? "current" : ""}>
+            <tr key={i}>
               <td>{i + 1}</td>
               <td className="num">{chips(l.smallBlind)}</td>
               <td className="num">{chips(l.bigBlind)}</td>
@@ -206,7 +247,10 @@ function StructureTab({ t, detail }: { t: TournamentSummary; detail: TournamentD
 function PayoutsTab({ detail }: { detail: TournamentDetail }) {
   return (
     <>
-      <p className="muted small">Play money: the prize pool is 100 leaderboard points per entrant. Updates as players register.</p>
+      <p className="muted small">
+        Play money: the prize pool is 100 leaderboard points per entrant. Knockouts in a later round always finish ahead of knockouts in an
+        earlier round.
+      </p>
       <table className="data">
         <thead>
           <tr>

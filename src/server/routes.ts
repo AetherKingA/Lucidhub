@@ -49,7 +49,7 @@ export function registerTournamentRoutes(app: FastifyInstance, manager: Tourname
             t.cancel(now);
             break;
           case "kick":
-            t.kick(Number(req.body?.userId));
+            t.kick(Number(req.body?.userId), now);
             break;
           default:
             return reply.code(404).send({ error: "Unknown operation" });

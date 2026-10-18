@@ -44,10 +44,7 @@ export function statusText(t: TournamentSummary, now: number) {
     const until = t.startTime - now;
     return until > 0 ? `Starts in ${formatClock(until)}` : t.entrants < 2 ? "Waiting for players" : "Starting…";
   }
-  if (t.status === "running") {
-    if (t.paused) return "Paused";
-    return t.phase === "break" ? "On break" : `Level ${t.level + 1}`;
-  }
+  if (t.status === "running") return t.paused ? "Paused" : `Round ${t.round} of ${t.totalRounds}`;
   return t.status === "finished" ? "Finished" : "Cancelled";
 }
 
@@ -65,8 +62,8 @@ function TournamentCard({ t }: { t: TournamentSummary }) {
           <span className={`pill ${t.status} ${t.paused ? "paused" : ""}`}>{statusText(t, now)}</span>
         </div>
         <div className="muted small">
-          {new Date(t.startTime).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })} · NLHE freezeout ·{" "}
-          {chips(t.startingStack)} chips
+          {new Date(t.startTime).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })} · 6-max shootout ·{" "}
+          {chips(t.startingStack)} chips every round
         </div>
         <div className="tcard-stats">
           <span>
@@ -79,7 +76,7 @@ function TournamentCard({ t }: { t: TournamentSummary }) {
           )}
           {t.status === "running" && (
             <span>
-              Blinds <b>{chips(t.levelInfo.smallBlind)}/{chips(t.levelInfo.bigBlind)}</b>
+              <b>{t.activeTables}</b> tables
             </span>
           )}
         </div>
@@ -89,6 +86,11 @@ function TournamentCard({ t }: { t: TournamentSummary }) {
           <span className="muted">
             You finished {ordinal(me.place)}
             {me.points ? ` · +${me.points} pts` : ""}
+          </span>
+        ) : me?.waiting ? (
+          <span className="ok">
+            ✓ Through to round {me.waiting.round} · waiting for {me.waiting.groupSize - me.waiting.groupDone} more table
+            {me.waiting.groupSize - me.waiting.groupDone === 1 ? "" : "s"}
           </span>
         ) : me?.tableId != null ? (
           <button className="btn primary" onClick={() => navigate(`/t/${t.id}/table/${me.tableId}`)}>
@@ -103,9 +105,9 @@ function TournamentCard({ t }: { t: TournamentSummary }) {
               </button>
             )}
           </>
-        ) : t.lateRegOpen && t.entrants < t.maxPlayers ? (
+        ) : t.registrationOpen ? (
           <button className="btn primary" onClick={() => send({ type: "register", tournamentId: t.id })}>
-            {t.status === "running" ? "Late register" : "Register"}
+            Register
           </button>
         ) : null}
         <button className="btn ghost" onClick={open}>
@@ -130,15 +132,14 @@ function CreateTournament() {
     start: toLocalInput(Date.now() + 30 * 60_000),
     startingStack: 10000,
     levelMinutes: 10,
-    lateRegLevels: 6,
-    maxPlayers: 1000,
+    maxPlayers: 1296,
     breakEveryLevels: 6,
     breakMinutes: 5,
     decisionSeconds: 20,
     payoutPercent: 15,
   }));
-  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm((f) => ({ ...f, [k]: e.target.type === "number" ? Number(e.target.value) : e.target.value }));
+  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    setForm((f) => ({ ...f, [k]: e.target.type === "number" || k === "maxPlayers" ? Number(e.target.value) : e.target.value }));
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -173,6 +174,10 @@ function CreateTournament() {
   return (
     <form className="card create" onSubmit={submit}>
       <h3>New tournament</h3>
+      <p className="muted small">
+        6-max shootout: each table plays until one player has every chip, and the winners of six tables meet at a new table. Every
+        new table starts everyone with the same stack and the blinds back at level 1. Registration closes when it starts.
+      </p>
       <div className="grid">
         <label className="wide">
           Name
@@ -184,8 +189,16 @@ function CreateTournament() {
         </label>
         {num("startingStack", "Starting chips", 1000, 1_000_000)}
         {num("levelMinutes", "Minutes per level", 1, 60)}
-        {num("lateRegLevels", "Late registration (levels)", 0, 30)}
-        {num("maxPlayers", "Max players", 2, 1000)}
+        <label>
+          Max players
+          <select value={form.maxPlayers} onChange={set("maxPlayers")}>
+            {[6, 36, 216, 1296].map((n, i) => (
+              <option key={n} value={n}>
+                {n.toLocaleString()} ({i + 1} round{i ? "s" : ""})
+              </option>
+            ))}
+          </select>
+        </label>
         {num("breakEveryLevels", "Break every N levels (0 = none)", 0, 30)}
         {num("breakMinutes", "Break length (min)", 0, 60)}
         {num("decisionSeconds", "Seconds per decision", 5, 120)}

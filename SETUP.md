@@ -51,9 +51,15 @@ Never share `.env`: the client secret lets anyone pretend to be your site to Dis
 
 Sign in with the Discord account you put in `ADMIN_DISCORD_IDS`. You'll see an **Admin** badge.
 
-- **Create:** click **+ New tournament** in the lobby and pick a start time and structure. It starts
-  automatically at that time if at least two players have registered. You can also open the
-  tournament and use **Admin → Start now**.
+- **Format:** every tournament is a 6-max **shootout**. Each table plays until one player has all the
+  chips, and that winner advances. The winners of every six tables meet at a new table, where everyone
+  starts again with the same stack and the blinds back at level 1, so nobody can bully a new table
+  with chips won earlier. This repeats until the final table. Player caps are 6, 36, 216 or 1,296
+  (one to four rounds), so the bracket always collapses evenly. A group of six tables moves on as soon
+  as all six are done; it doesn't wait for the rest of the round.
+- **Create:** click **+ New tournament** in the lobby and pick a start time, cap and structure. It
+  starts automatically at that time if at least two players have registered (registration closes
+  then). You can also open the tournament and use **Admin → Start now**.
 - **Pause / resume:** Admin tab on the tournament page. Pausing freezes the blind clock and every
   player's timer; hands continue exactly where they stopped.
 - **Shared-IP flags:** the Admin tab lists players at the same table who have signed in from the same
