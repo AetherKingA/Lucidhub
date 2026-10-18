@@ -74,8 +74,14 @@ The Event Hub (a separate admin dashboard on this PC) can create and control tou
 the final places and hand out Discord prizes to the winners. It's off until you set a shared secret.
 
 1. In `.env`, set `HUB_SECRET` to the same long random string you put in the hub's config, and
-   `HUB_URL` to the hub's address (default `http://127.0.0.1:3100`, no trailing slash).
+   `HUB_URL` to the hub's address (default `http://127.0.0.1:3100`, no trailing slash). The hub can
+   write both for you when you connect Poker Night on its Games page.
 2. Restart the server. The hub talks to this site at `http://127.0.0.1:3000`.
+
+The hub can also run this server for you (Games → Start, or start it with the hub). It uses
+`scripts\hub-start.cmd`, which does what `start.bat` does without the prompts, and stops the
+server through the signed `POST /api/integration/shutdown` route, so tournaments are saved first.
+Use either the hub or `start.bat`, not both at once.
 
 Every request in both directions is signed with that secret (`X-Hub-Timestamp` +
 `X-Hub-Signature` = HMAC-SHA256 of `timestamp.body`) and rejected if the clock differs by more than
@@ -83,7 +89,7 @@ five minutes. When a tournament finishes, this site POSTs `{"type":"event.finish
 `HUB_URL/api/games/poker/webhook`; if the hub is down, it picks the result up on its next poll.
 
 Routes (all under `/api/integration`): `GET /info`, `POST /events`, `GET /events?status=&since=`,
-`POST /events/:id/start|pause|resume|cancel`, `GET /events/:id/results`.
+`POST /events/:id/start|pause|resume|cancel`, `GET /events/:id/results`, `POST /shutdown`.
 
 ## Testing on your own PC
 

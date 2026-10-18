@@ -28,7 +28,8 @@ const notifier = {
 };
 const manager = new TournamentManager(notifier);
 const app = Fastify();
-registerIntegrationRoutes(app, manager);
+const onShutdown = vi.fn();
+registerIntegrationRoutes(app, manager, onShutdown);
 
 beforeAll(() => app.ready());
 afterAll(async () => {
@@ -183,5 +184,16 @@ describe("events", () => {
     expect(res.json()).toMatchObject({ status: "cancelled" });
     expect(res.json().finishedAt).toBeTypeOf("number");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("shutdown", () => {
+  it("stops the server only for a signed request, after answering", async () => {
+    const unsigned = await app.inject({ method: "POST", url: "/api/integration/shutdown" });
+    expect(unsigned.statusCode).toBe(401);
+    const res = await hub("POST", "/api/integration/shutdown", {});
+    expect(res.statusCode).toBe(200);
+    await new Promise((r) => setImmediate(r));
+    expect(onShutdown).toHaveBeenCalledTimes(1);
   });
 });

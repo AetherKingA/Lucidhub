@@ -26,7 +26,7 @@ manager.load(Date.now());
 registerAuthRoutes(app);
 realtime.register(app);
 registerTournamentRoutes(app, manager);
-registerIntegrationRoutes(app, manager);
+registerIntegrationRoutes(app, manager, () => void shutdown("Hub request"));
 app.get("/api/health", async () => ({ ok: true, online: realtime.onlineCount() }));
 
 // Serve the built website. Unknown non-API paths get index.html so client-side routes work.

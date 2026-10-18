@@ -94,7 +94,11 @@ function toSummary(m: TournamentMeta): EventSummary {
 
 const parseId = (id: string) => (/^\d+$/.test(id) ? Number(id) : NaN);
 
-export function registerIntegrationRoutes(app: FastifyInstance, manager: TournamentManager) {
+/**
+ * onShutdown lets the hub stop this server cleanly (it starts it as a background process, and Windows
+ * can't send Ctrl+C to one). Without it, the shutdown route answers 404.
+ */
+export function registerIntegrationRoutes(app: FastifyInstance, manager: TournamentManager, onShutdown?: () => void) {
   // Encapsulated so the raw-body JSON parser and the signature check only apply to these routes.
   app.register(async (scope) => {
     const rawBodies = new WeakMap<FastifyRequest, string>();
@@ -118,6 +122,14 @@ export function registerIntegrationRoutes(app: FastifyInstance, manager: Tournam
     });
 
     scope.get("/api/integration/info", async () => ({ key: GAME_KEY, name: "Poker Night", fields: fields() }));
+
+    scope.post("/api/integration/shutdown", async (_req, reply) => {
+      if (!onShutdown) return reply.code(404).send({ error: "not_supported" });
+      console.log("[hub] Shutdown requested by the hub");
+      // Answer first, then stop: tournaments are saved and come back paused on the next start.
+      reply.raw.once("finish", () => setImmediate(onShutdown));
+      return { ok: true };
+    });
 
     scope.post<{ Body: CreateOptions | undefined }>("/api/integration/events", async (req) => {
       const t = manager.create(req.body ?? ({} as CreateOptions), Date.now());
