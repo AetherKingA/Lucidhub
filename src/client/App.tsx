@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
-import type { ServerMessage, UserInfo } from "../shared/protocol.ts";
-import { useSocket } from "./useSocket.ts";
+import type { UserInfo } from "../shared/protocol.ts";
+import { GameProvider, useGame } from "./game.tsx";
+import { Lobby } from "./Lobby.tsx";
+import { navigate, useRoute } from "./router.ts";
+import { TablePage } from "./TablePage.tsx";
+import { TournamentPage } from "./TournamentPage.tsx";
 
 export const SITE_NAME = "Poker Night";
 
@@ -18,7 +22,7 @@ export function App() {
   const [me, setMe] = useState<MeState>({ status: "loading" });
   const [error] = useState(() => {
     const code = new URLSearchParams(location.search).get("error");
-    if (code) history.replaceState(null, "", location.pathname);
+    if (code) history.replaceState(null, "", location.pathname + location.hash);
     return code ? (LOGIN_ERRORS[code] ?? LOGIN_ERRORS.login_failed!) : null;
   });
 
@@ -30,7 +34,11 @@ export function App() {
 
   if (me.status === "loading") return <div className="center muted">Loading…</div>;
   if (me.status === "signedOut") return <Login error={error} />;
-  return <Lobby user={me.user} onLogout={() => setMe({ status: "signedOut" })} />;
+  return (
+    <GameProvider user={me.user}>
+      <Shell onLogout={() => setMe({ status: "signedOut" })} />
+    </GameProvider>
+  );
 }
 
 function Login({ error }: { error: string | null }) {
@@ -50,12 +58,9 @@ function Login({ error }: { error: string | null }) {
   );
 }
 
-function Lobby({ user, onLogout }: { user: UserInfo; onLogout: () => void }) {
-  const [online, setOnline] = useState<number | null>(null);
-  const { status } = useSocket((msg: ServerMessage) => {
-    if (msg.type === "hello") setOnline(msg.online);
-    else if (msg.type === "online") setOnline(msg.count);
-  });
+function Shell({ onLogout }: { onLogout: () => void }) {
+  const { user, status, online, notices, dismiss } = useGame();
+  const route = useRoute();
 
   const logout = async () => {
     await fetch("/auth/logout", { method: "POST" });
@@ -63,29 +68,36 @@ function Lobby({ user, onLogout }: { user: UserInfo; onLogout: () => void }) {
   };
 
   return (
-    <>
+    <div className={`shell ${route.page === "table" ? "at-table" : ""}`}>
       <header className="topbar">
-        <span className="brand">♠ {SITE_NAME}</span>
+        <a className="brand" href="#/" onClick={() => navigate("/")}>
+          ♠ {SITE_NAME}
+        </a>
         <span className={`status ${status}`}>
-          {status === "open" ? `${online ?? "–"} online` : status === "connecting" ? "Connecting…" : "Server offline"}
+          {status === "open" ? `${online} online` : status === "connecting" ? "Connecting…" : "Server offline — reconnecting"}
         </span>
         <span className="me">
           <img src={user.avatarUrl} alt="" width={28} height={28} />
-          {user.username}
+          <span className="me-name">{user.username}</span>
           {user.isAdmin && <span className="badge">Admin</span>}
           <button className="link" onClick={logout}>
             Sign out
           </button>
         </span>
       </header>
-      <main className="lobby">
-        <h2>Tournaments</h2>
-        <div className="card empty">
-          <p>No tournaments scheduled yet.</p>
-          <p className="muted">Tournament registration and tables are coming next.</p>
-        </div>
-      </main>
-    </>
+
+      {route.page === "lobby" && <Lobby />}
+      {route.page === "tournament" && <TournamentPage id={route.tournamentId} />}
+      {route.page === "table" && <TablePage tournamentId={route.tournamentId} tableId={route.tableId} />}
+
+      <div className="notices" role="status">
+        {notices.map((n) => (
+          <button key={n.id} className={`notice ${n.kind}`} onClick={() => dismiss(n.id)}>
+            {n.text}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

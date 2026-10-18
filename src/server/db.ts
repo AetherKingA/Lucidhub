@@ -9,6 +9,7 @@ export const db = new DatabaseSync(config.dbPath);
 
 // WAL keeps writes fast and the file consistent if the PC loses power mid-write.
 db.exec(`
+  PRAGMA busy_timeout = 5000;
   PRAGMA journal_mode = WAL;
   PRAGMA synchronous = NORMAL;
   PRAGMA foreign_keys = ON;

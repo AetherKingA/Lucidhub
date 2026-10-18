@@ -47,11 +47,48 @@ Never share `.env`: the client secret lets anyone pretend to be your site to Dis
 - While the server runs, Windows won't go to sleep. The screen can still turn off.
 - All data lives in `data/poker.db`. Back up that file to back up the site.
 
+## Running a tournament
+
+Sign in with the Discord account you put in `ADMIN_DISCORD_IDS`. You'll see an **Admin** badge.
+
+- **Create:** click **+ New tournament** in the lobby and pick a start time and structure. It starts
+  automatically at that time if at least two players have registered. You can also open the
+  tournament and use **Admin → Start now**.
+- **Pause / resume:** Admin tab on the tournament page. Pausing freezes the blind clock and every
+  player's timer; hands continue exactly where they stopped.
+- **Shared-IP flags:** the Admin tab lists players at the same table who have signed in from the same
+  IP address, with a button to remove a player.
+- **If the server stops mid-tournament** (you closed it, the PC crashed or lost power), start it
+  again: the tournament comes back **paused** at the moment it stopped, mid-hand, with everyone's
+  chips. Players' browsers reconnect by themselves. Click **Resume** when you're ready.
+
+## Testing on your own PC
+
+You can try everything without Discord, from this PC only:
+
+```
+npm run dev-login -- "Your Name"
+```
+
+prints a `sid=...` line. Open http://localhost:3000, press F12, and in the Console run
+`document.cookie = "sid=...; path=/"` with that value, then reload. To make that test account an admin,
+add `800000000000000001` to `ADMIN_DISCORD_IDS` in `.env` and restart.
+
+Bots give you opponents and double as a load test (they connect and play exactly like browsers):
+
+```
+npm run bots -- 50          # 50 bots join the first tournament open for registration
+npm run bots -- 1000 2 --fast   # 1000 instant-acting bots join tournament #2
+```
+
+Stop them with Ctrl+C. Bot accounts are real rows in the database named "Bot 1", "Bot 2", and so on,
+so don't run them against a real event.
+
 ## For development
 
 ```
 npm run dev     # server + live-reloading website at http://localhost:5173
-npm test        # poker engine tests
+npm test        # engine and tournament tests, including full simulated tournaments
 ```
 
 ## Troubleshooting

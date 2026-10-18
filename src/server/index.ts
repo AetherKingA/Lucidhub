@@ -8,21 +8,29 @@ import { registerAuthRoutes } from "./auth.ts";
 import { config, discordConfigured } from "./config.ts";
 import { db } from "./db.ts";
 import { keepAwake } from "./keepAwake.ts";
-import { onlineCount, registerRealtime } from "./realtime.ts";
+import { Realtime } from "./realtime.ts";
+import { registerTournamentRoutes } from "./routes.ts";
+import { TournamentManager } from "./tournament/manager.ts";
 
 const app = Fastify({ logger: { level: "warn" }, trustProxy: config.trustProxy });
 
 await app.register(fastifyCookie);
 await app.register(fastifyWebsocket, { options: { maxPayload: 16 * 1024 } });
 
+const realtime = new Realtime();
+const manager = new TournamentManager(realtime);
+realtime.manager = manager;
+manager.load(Date.now());
+
 registerAuthRoutes(app);
-registerRealtime(app);
-app.get("/api/health", async () => ({ ok: true, online: onlineCount() }));
+realtime.register(app);
+registerTournamentRoutes(app, manager);
+app.get("/api/health", async () => ({ ok: true, online: realtime.onlineCount() }));
 
 // Serve the built website. Unknown non-API paths get index.html so client-side routes work.
 const hasBuild = existsSync(join(config.distDir, "index.html"));
 if (hasBuild) {
-  await app.register(fastifyStatic, { root: config.distDir, wildcard: false });
+  await app.register(fastifyStatic, { root: config.distDir });
   app.setNotFoundHandler((req, reply) => {
     if (req.method === "GET" && !req.url.startsWith("/api/") && !req.url.startsWith("/auth/"))
       return reply.sendFile("index.html");
@@ -42,6 +50,7 @@ async function shutdown(signal: string) {
   shuttingDown = true;
   console.log(`\n[server] ${signal} received, shutting down...`);
   try {
+    manager.stop(); // saves every tournament; running ones come back paused on the next start
     await app.close();
   } finally {
     db.close();
@@ -54,6 +63,7 @@ async function shutdown(signal: string) {
 for (const sig of ["SIGINT", "SIGTERM", "SIGHUP", "SIGBREAK"] as const) process.on(sig, () => void shutdown(sig));
 
 await app.listen({ port: config.port, host: "127.0.0.1" });
+manager.start();
 
 console.log("");
 console.log("  Poker server is running");
