@@ -1,9 +1,11 @@
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import type { Action, SeatView, TableView } from "../shared/protocol.ts";
+import type { Equity } from "../shared/equity.ts";
 import { describeHand } from "../shared/handName.ts";
 import { PlayingCard } from "./Cards.tsx";
 import { TableChat } from "./Chat.tsx";
 import { chips, formatClock, tableKey, useGame, useServerNow } from "./game.tsx";
+import { useEquity } from "./useEquity.ts";
 
 export function TablePage({ tournamentId, tableId }: { tournamentId: number; tableId: number }) {
   const { tables, chats, send, tournaments, status } = useGame();
@@ -131,8 +133,9 @@ function LevelClock({ view, remaining }: { view: TableView; remaining: number })
 function seatPosition(i: number, n: number) {
   const angle = Math.PI / 2 + (i / n) * Math.PI * 2;
   return {
-    seat: { left: 50 + 45 * Math.cos(angle), top: 50 + 44 * Math.sin(angle) },
-    bet: { left: 50 + 29 * Math.cos(angle), top: 50 + 27 * Math.sin(angle) },
+    // Seats sit out on the rail; bets in front of them, clear of the board.
+    seat: { left: 50 + 49 * Math.cos(angle), top: 50 + 44 * Math.sin(angle) },
+    bet: { left: 50 + 33 * Math.cos(angle), top: 50 + 24 * Math.sin(angle) },
   };
 }
 
@@ -173,6 +176,10 @@ function Table({ view, sound }: { view: TableView; sound: boolean }) {
   useTurnSound(myTurn, sound, view.handNo);
   const totalPot = view.pot + view.seats.reduce((t, s) => t + (s?.bet ?? 0), 0);
   const myHand = me && !me.folded ? describeHand(me.holeCards, view.board) : null;
+  // Win chance while the hand is live: against everyone still in, holding random cards.
+  const live = Boolean(me && me.inHand && !me.folded && view.street && !view.handComplete);
+  const opponents = view.seats.filter((s) => s && s.userId !== me?.userId && s.inHand && !s.folded).length;
+  const equity = useEquity(live ? me!.holeCards : null, view.board, opponents);
 
   return (
     <>
@@ -204,7 +211,18 @@ function Table({ view, sound }: { view: TableView; sound: boolean }) {
               return (
                 <div key={seatIdx}>
                   <div className="seat-slot" style={{ left: `${pos.seat.left}%`, top: `${pos.seat.top}%` }}>
-                    {s ? <Seat s={s} view={view} isMe={seatIdx === view.mySeat} handLabel={seatIdx === view.mySeat ? myHand : null} /> : <div className="seat empty-seat">Open seat</div>}
+                    {s ? (
+                      <Seat
+                        s={s}
+                        view={view}
+                        isMe={seatIdx === view.mySeat}
+                        handLabel={seatIdx === view.mySeat ? myHand : null}
+                        equity={seatIdx === view.mySeat ? equity : null}
+                        opponents={opponents}
+                      />
+                    ) : (
+                      <div className="seat empty-seat">Open seat</div>
+                    )}
                     {view.button === seatIdx && view.street && <span className="dealer-btn">D</span>}
                   </div>
                   {s && s.bet > 0 && (
@@ -246,7 +264,8 @@ function ChipStack({ amount }: { amount: number }) {
   );
 }
 
-function Seat({ s, view, isMe, handLabel }: { s: SeatView; view: TableView; isMe: boolean; handLabel: string | null }) {
+function Seat(p: { s: SeatView; view: TableView; isMe: boolean; handLabel: string | null; equity: Equity | null; opponents: number }) {
+  const { s, view, isMe, handLabel, equity } = p;
   const acting = view.toActSeat === s.seat && !view.handComplete;
   const winner = view.handComplete && s.won > 0;
   return (
@@ -279,7 +298,42 @@ function Seat({ s, view, isMe, handLabel }: { s: SeatView; view: TableView; isMe
       ) : s.lastAction ? (
         <div className={`tag act-${s.lastAction.split(" ")[0]!.toLowerCase().replace("-", "")}`}>{s.lastAction}</div>
       ) : null}
-      {isMe && handLabel && !winner && <div className="tag mine">{handLabel}</div>}
+      {isMe && !winner && (handLabel || equity) && <MyRead label={handLabel} equity={equity} opponents={p.opponents} />}
+    </div>
+  );
+}
+
+/**
+ * Under your seat: what you hold ("Pocket Kings") and your chance to win, as a number and a bar.
+ * The chance is against the opponents still in, holding random cards (their real cards are unknown).
+ */
+function MyRead({ label, equity, opponents }: { label: string | null; equity: Equity | null; opponents: number }) {
+  const win = equity ? Math.round(equity.win * 100) : null;
+  const tie = equity ? Math.round(equity.tie * 100) : 0;
+  const level = win === null ? "" : win >= 50 ? "good" : win >= 25 ? "ok" : "low";
+  return (
+    <div
+      className={`my-read ${level}`}
+      title={
+        equity
+          ? `Estimated from ${equity.iterations.toLocaleString()} random deals against ${opponents} opponent${opponents === 1 ? "" : "s"} holding random cards. Their real cards are unknown.`
+          : undefined
+      }
+    >
+      <div className="mr-line">
+        {label && <span className="mr-hand">{label}</span>}
+        {win !== null && (
+          <span className="mr-win">
+            <b>{win}%</b> win{tie >= 1 && <span className="muted"> · {tie}% split</span>}
+          </span>
+        )}
+      </div>
+      {equity && (
+        <div className="wc-bar">
+          <span className="wc-win" style={{ width: `${equity.win * 100}%` }} />
+          <span className="wc-tie" style={{ width: `${equity.tie * 100}%` }} />
+        </div>
+      )}
     </div>
   );
 }
