@@ -158,6 +158,20 @@ describe("windowsProgramPath", () => {
   });
 });
 
+describe("suggestedLaunch", () => {
+  it("fills in the games that live in games/, each on its own ports", async () => {
+    const { suggestedLaunch } = await import("../src/server/games.ts");
+    const { sep } = await import("node:path");
+    const poker = suggestedLaunch("poker")!;
+    const uno = suggestedLaunch("uno")!;
+    expect(poker).toMatchObject({ name: "Poker Night", baseUrl: "http://127.0.0.1:3000", launchCmd: "npm start", publicAccess: true, funnelPort: 443 });
+    expect(uno).toMatchObject({ name: "Uno Night", baseUrl: "http://127.0.0.1:3001", launchCmd: "npm start", publicAccess: true, funnelPort: 8443 });
+    expect(uno.launchDir.endsWith(`games${sep}uno-tournament`)).toBe(true);
+    expect(suggestedLaunch("chess")).toBeNull();
+    expect(suggestedLaunch("toString")).toBeNull();
+  });
+});
+
 describe("gameEnvFor", () => {
   it("hands a game its port, public address, Discord login, hub secret and own database", async () => {
     const { gameEnvFor } = await import("../src/server/processes.ts");

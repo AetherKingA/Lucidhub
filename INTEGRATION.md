@@ -1,6 +1,6 @@
 # Connecting a game to the hub
 
-Any game site (Poker Night today, chess later) plugs into the hub by implementing five HTTP routes
+Any game site (Poker Night and Uno Night today, chess later) plugs into the hub by implementing five HTTP routes
 and one webhook. The hub never reaches into a game's database; it only uses this contract.
 
 The hub refers to a game's tournaments, matches or games as **events**. Players are identified by
@@ -85,7 +85,7 @@ The game has no settings file of its own. The hub starts it with these environme
 
 Never the bot token or the hub's own database. When *open to players* is on, the hub opens Tailscale
 Funnel to the game's port before starting it, and closes it when the game stops. One game per public
-port (443, 8443, 10000). See Poker Night (`games/poker-tournament`) for a complete example.
+port (443, 8443, 10000). See Poker Night (`games/poker-tournament`) or Uno Night (`games/uno-tournament`) for a complete example.
 
 ## Registering the game
 

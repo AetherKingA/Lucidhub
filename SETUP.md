@@ -1,16 +1,16 @@
 # LucidHub — setup
 
-LucidHub is the one thing you run. It's your admin dashboard, it runs your games (Poker Night now,
-chess later), opens them to players on the internet, and its Discord bot DMs each winner their prize
-the moment an event ends and announces the winners in your server. Set it up once and it runs by
-itself.
+LucidHub is the one thing you run. It's your admin dashboard, it runs your games (Poker Night and
+Uno Night now, chess later), opens them to players on the internet, and its Discord bot DMs each
+winner their prize the moment an event ends and announces the winners in your server. Set it up once
+and it runs by itself.
 
 - **One settings file:** `event-hub/.env`. Games get what they need from LucidHub; they have no
   settings file of their own.
 - **One data folder:** `event-hub/data/`. The hub's data is in `hub.db`, each game's in
   `games/<game>/`, server logs in `logs/`.
-- **Games live in `games/`** (Poker Night is `games/poker-tournament`). Everything is one git repo
-  and one `npm install`.
+- **Games live in `games/`** (Poker Night is `games/poker-tournament`, Uno Night is
+  `games/uno-tournament`). Everything is one git repo and one `npm install`.
 
 The dashboard itself is **only reachable from this PC** (it holds your prize codes). Players reach
 the games through Tailscale Funnel.
@@ -23,7 +23,7 @@ Use one application for everything: https://discord.com/developers/applications
    Gateway Intents off; the bot doesn't need them.
 2. **OAuth2** page: copy the **Client ID** and **Client Secret**. Under **Redirects**, add
    `http://localhost:3100/auth/discord/callback` (your dashboard login) and click **Save Changes**.
-   You'll add one more redirect for Poker Night in step 4. LucidHub shows you the exact address.
+   You'll add one more redirect per game in step 4. LucidHub shows you the exact address.
 
 ## 2. Settings file
 
@@ -48,9 +48,12 @@ Click it, approve, and press **Restart**.
 3. **Games → Poker Night.** Connect it if it isn't there yet. Its settings are pre-filled: folder
    `games\poker-tournament`, start command `npm start`, *start with LucidHub* and *open to players*
    ticked. Click **Start**.
-4. When it's running, the Games page shows the address players use and **the Discord redirect it
-   needs**. Copy that redirect into Discord (OAuth2 → Redirects → Save Changes). Without it, players
-   get "Invalid OAuth2 redirect_uri" when they sign in.
+   **Uno Night** works the same way: **Connect a game**, key `uno`, and everything is pre-filled
+   (folder `games\uno-tournament`, address `http://127.0.0.1:3001`, public on port **8443** so it
+   doesn't clash with Poker Night on the main address).
+4. When a game is running, the Games page shows the address players use and **the Discord redirect
+   it needs** (each game has its own). Copy that redirect into Discord (OAuth2 → Redirects → Save
+   Changes). Without it, players get "Invalid OAuth2 redirect_uri" when they sign in.
 5. **Prizes → New prize.** A *code pool* gives each winner the next unused code (game keys, gift
    cards); paste codes one per line or upload a .txt/.csv. A *message* prize sends the same text to
    every winner (e.g. "Reply here with your shirt size").
@@ -61,21 +64,24 @@ Click it, approve, and press **Restart**.
   and a live **Log** (also saved in `data/logs/`).
 - Servers set to *start with LucidHub* come up with it and are restarted automatically if they
   crash. After five crashes in ten minutes LucidHub stops retrying and alerts you. Check the log.
-- **Stop** asks the game to save and exit (Poker Night saves every tournament; running ones come back
-  paused) and closes its Funnel. Closing the LucidHub window does the same for every game.
+- **Stop** asks the game to save and exit (Poker Night and Uno Night save every tournament; running
+  ones come back paused) and closes its Funnel. Closing the LucidHub window does the same for every
+  game.
 - While LucidHub runs, Windows won't go to sleep. The screen can still turn off.
 
 ## Running events
 
 - **New event:** pick the game, fill in its options (for poker: start time, player cap, stack, blind
-  speed…), add prizes by place (1st → $50 card, 2nd–3rd → game key), pick the announcement channel,
-  and create it. It appears on the game site straight away.
+  speed…; for Uno: players per table, hands to win a table, stacking…), add prizes by place (1st →
+  $50 card, 2nd–3rd → game key), pick the announcement channel, and create it. It appears on the
+  game site straight away.
 - **That's it.** When the event ends, each winner gets a DM with their prize and the winners are
   announced in the channel (prize names only; codes are never posted publicly).
-- Tournaments created on the Poker Night site directly also show up under **Events**; open one to
+- Tournaments created on a game site directly also show up under **Events**; open one to
   attach prizes before it ends. You can even add prizes after an event finished and they're sent then.
 - **Save a ladder** you use often ("Weekly poker") and load it on the next event in one click.
-- How poker tournaments work (format, pausing, shared-IP flags): `games/poker-tournament/README.md`.
+- How the tournaments work (format, pausing, shared-IP flags): `games/poker-tournament/README.md` and
+  `games/uno-tournament/README.md`.
 
 ### What happens when something goes wrong
 
@@ -96,7 +102,7 @@ Winners can type **/prizes** in your server any time to see everything they've w
 - **"Invalid OAuth2 redirect_uri" from Discord:** the address isn't in your Discord application's
   Redirects, character for character. The dashboard needs `http://localhost:3100/auth/discord/callback`;
   each public game needs the redirect shown on its Games card. Click **Save Changes** after adding.
-- **Players can't open Poker Night:** check its Games card. An **Approve** link means Tailscale
+- **Players can't open a game:** check its Games card. An **Approve** link means Tailscale
   needs your one-time OK. "Tailscale isn't connected" means open Tailscale and sign in. Then Restart.
 - **Players see a 502 error:** Funnel is open but the game isn't running. Start it on the Games page.
 

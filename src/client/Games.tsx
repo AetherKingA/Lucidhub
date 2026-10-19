@@ -50,9 +50,9 @@ interface Launch {
   funnelPort: number;
 }
 
-type Suggestion = { launchDir?: string; launchCmd?: string; publicAccess?: boolean };
+type Suggestion = { name?: string; baseUrl?: string; launchDir?: string; launchCmd?: string; publicAccess?: boolean; funnelPort?: number };
 
-/** Fills in the launch settings for a game LucidHub knows (Poker Night in games/). */
+/** Fills in the settings for a game LucidHub knows (Poker Night, Uno Night in games/). */
 function useSuggestion(key: string, skip: boolean, apply: (s: Suggestion) => void) {
   useEffect(() => {
     if (skip || !key) return;
@@ -63,15 +63,30 @@ function useSuggestion(key: string, skip: boolean, apply: (s: Suggestion) => voi
 }
 
 function AddGame({ onDone }: { onDone: () => void }) {
-  const [key, setKey] = useState("poker");
-  const [name, setName] = useState("Poker Night");
+  const { games } = useHub();
+  // Suggest the first game in games/ that isn't connected yet.
+  const [key, setKey] = useState(() => (games.some((g) => g.key === "poker") && !games.some((g) => g.key === "uno") ? "uno" : "poker"));
+  const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("http://127.0.0.1:3000");
   const [launch, setLaunch] = useState<Launch>({ launchDir: "", launchCmd: "", autostart: true, publicAccess: false, funnelPort: 443 });
   const { busy, run } = useAction();
+  // What the last suggestion filled in: those fields follow the key until you edit them.
+  const last = useRef<Suggestion>({});
 
-  useSuggestion(key, false, (s) =>
-    setLaunch((l) => ({ ...l, launchDir: l.launchDir || s.launchDir!, launchCmd: l.launchCmd || s.launchCmd!, publicAccess: s.publicAccess ?? l.publicAccess })),
-  );
+  useSuggestion(key, false, (s) => {
+    const prev = last.current;
+    const follow = <T,>(current: T, before: T | undefined, next: T | undefined) => (next !== undefined && (!current || current === before) ? next : current);
+    setName((n) => follow(n, prev.name, s.name));
+    setBaseUrl((u) => follow(u, prev.baseUrl ?? "http://127.0.0.1:3000", s.baseUrl));
+    setLaunch((l) => ({
+      ...l,
+      launchDir: follow(l.launchDir, prev.launchDir, s.launchDir),
+      launchCmd: follow(l.launchCmd, prev.launchCmd, s.launchCmd),
+      publicAccess: s.publicAccess ?? l.publicAccess,
+      funnelPort: follow(l.funnelPort, prev.funnelPort ?? 443, s.funnelPort),
+    }));
+    last.current = s;
+  });
 
   return (
     <section className="card panel">
