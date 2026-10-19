@@ -67,7 +67,7 @@ describe("signatures", () => {
     expect(info).toMatchObject({ key: "poker", name: "Poker Night" });
     expect(info.fields.map((f: { name: string }) => f.name)).toEqual([
       "name", "startTime", "access", "maxPlayers", "startingStack", "chipMode", "levels", "breakEveryLevels",
-      "breakMinutes", "decisionSeconds", "timeBankSeconds", "payoutPercent",
+      "breakMinutes", "decisionSeconds", "timeBankSeconds", "payoutPercent", "rabbitHunt",
     ]);
     expect(info.fields.find((f: { name: string }) => f.name === "maxPlayers").options.map((o: { value: number }) => o.value)).toEqual([6, 36, 216, 1296]);
   });

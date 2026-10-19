@@ -6,6 +6,8 @@ import {
   type HandState,
   applyAction,
   legalActions,
+  rabbitResult,
+  runout,
   startHand,
   viewFor,
 } from "../src/shared/engine/hand.ts";
@@ -220,6 +222,73 @@ describe("showdown and pots", () => {
     expect(total(s)).toBe(before);
     s = play(s, ["p0", raise(1000)], ["p1", call], ["p2", call]);
     expect(total(s)).toBe(before);
+  });
+});
+
+describe("rabbit hunt", () => {
+  const BOARD = "2c 7d 9h Js 3s";
+
+  it("deals the rest of the board after a hand ends preflop, flop or turn", () => {
+    const cfg = table([1000, 1000, 1000]);
+    const deck = stackedDeck(cfg, {}, BOARD);
+    // Preflop: p0 and p1 fold to the big blind.
+    let s = play(startHand(cfg, deck), ["p0", fold], ["p1", fold]);
+    expect(s.board).toEqual([]);
+    expect(runout(s)).toEqual(BOARD.split(" "));
+    // Flop: everyone limps, then a bet takes it down.
+    s = play(startHand(cfg, deck), ["p0", call], ["p1", call], ["p2", check], ["p1", raise(200)], ["p2", fold], ["p0", fold]);
+    expect(s.board).toEqual(["2c", "7d", "9h"]);
+    expect(runout(s)).toEqual(["Js", "3s"]);
+    // Turn.
+    s = play(startHand(cfg, deck), ["p0", call], ["p1", call], ["p2", check], ["p1", check], ["p2", check], ["p0", check]);
+    s = play(s, ["p1", raise(200)], ["p2", fold], ["p0", fold]);
+    expect(s.board).toEqual(["2c", "7d", "9h", "Js"]);
+    expect(runout(s)).toEqual(["3s"]);
+  });
+
+  it("shows nothing while the hand is running, or once the board is complete", () => {
+    const cfg = table([1000, 1000]);
+    let s = startHand(cfg, stackedDeck(cfg, { 0: "As Ad", 1: "Kc Kd" }));
+    expect(runout(s)).toEqual([]);
+    s = play(s, ["p0", raise(1000)], ["p1", call]);
+    expect(s.board).toHaveLength(5);
+    expect(runout(s)).toEqual([]);
+  });
+
+  /** p0 folds preflop, p1 and p2 check it down to showdown. */
+  function foldThenShowdown(holes: Record<number, string>, board: string) {
+    const cfg = table([1000, 1000, 1000]);
+    let s = startHand(cfg, stackedDeck(cfg, holes, board));
+    s = play(s, ["p0", fold], ["p1", call], ["p2", check]);
+    for (let i = 0; i < 3; i++) s = play(s, ["p1", check], ["p2", check]);
+    expect(s.result!.showdown.map((x) => x.playerId)).toEqual(["p1", "p2"]);
+    return s;
+  }
+
+  it("tells a folder they would have won, split or lost against the hands shown", () => {
+    const win = foldThenShowdown({ 0: "As Ad", 1: "Kc Kd", 2: "7c 2d" }, "Ah Kh 3c 8d 9s");
+    expect(rabbitResult(win, "p0")).toEqual({ handName: "Three of a Kind", outcome: "win" });
+    const lose = foldThenShowdown({ 0: "7s 2h", 1: "Kc Kd", 2: "Qc Qd" }, "Ah Kh 3c 8d 9s");
+    expect(rabbitResult(lose, "p0")!.outcome).toBe("lose");
+    const tie = foldThenShowdown({ 0: "2c 3d", 1: "4c 5d", 2: "6c 7d" }, "Ah Kd Qc Js Th");
+    expect(rabbitResult(tie, "p0")!.outcome).toBe("tie");
+  });
+
+  it("gives no verdict when the pot was won without a showdown", () => {
+    // p2's cards were never shown, so the folders learn nothing about them.
+    const cfg = table([1000, 1000, 1000]);
+    const s = play(startHand(cfg, stackedDeck(cfg, { 0: "As Ad", 2: "7c 2d" }, "Ah Kh 3c 8d 9s")), ["p0", fold], ["p1", fold]);
+    expect(rabbitResult(s, "p0")).toEqual({ handName: "Three of a Kind", outcome: null });
+  });
+
+  it("only answers for players who folded, once the hand is over", () => {
+    const cfg = table([1000, 1000, 1000]);
+    let s = startHand(cfg, stackedDeck(cfg, {}));
+    s = play(s, ["p0", fold]);
+    expect(rabbitResult(s, "p0")).toBeNull(); // hand still running
+    s = play(s, ["p1", fold]);
+    expect(rabbitResult(s, "p2")).toBeNull(); // the winner didn't fold
+    expect(rabbitResult(s, "p1")).not.toBeNull();
   });
 });
 

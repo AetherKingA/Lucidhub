@@ -1,5 +1,5 @@
 import { type CSSProperties, useEffect, useRef, useState } from "react";
-import type { Action, SeatView, TableView } from "../shared/protocol.ts";
+import type { Action, RabbitOutcome, SeatView, TableView } from "../shared/protocol.ts";
 import { type RaiseRange, amountAt, positionOf, sliderPositions, snapRaise } from "../shared/betSizing.ts";
 import type { Equity } from "../shared/equity.ts";
 import { describeHand } from "../shared/handName.ts";
@@ -217,6 +217,8 @@ function useTableSounds(view: TableView, enabled: boolean) {
       // Board cards, one after another (a flop is three flips).
       const added = view.board.length - p.board.length;
       for (let i = 0; i < added; i++) play("flip", 1, (hadBets ? 0.25 : 0) + i * 0.14);
+      // Rabbit hunt cards, softer than real ones.
+      for (let i = 0; i < view.rabbit.length - p.rabbit.length; i++) play("flip", 0.5, 0.3 + i * 0.14);
       // Every player's action. A new action changes the label or the amount in front of them.
       view.seats.forEach((s, i) => {
         const was = p.seats[i];
@@ -267,7 +269,8 @@ function Table(p: { view: TableView; sound: boolean; followingId: number | null;
   const me = view.mySeat !== null ? view.seats[view.mySeat] : null;
   useTableSounds(view, sound);
   const totalPot = view.pot + view.seats.reduce((t, s) => t + (s?.bet ?? 0), 0);
-  const myHand = me && !me.folded ? describeHand(me.holeCards, view.board) : null;
+  // After folding you still see your hand, on the rabbit hunt board once the hand is over.
+  const myHand = me ? describeHand(me.holeCards, me.folded ? [...view.board, ...view.rabbit] : view.board) : null;
   // Win chance while the hand is live: against everyone still in, holding random cards.
   const live = Boolean(me && me.inHand && !me.folded && view.street && !view.handComplete);
   const opponents = view.seats.filter((s) => s && s.userId !== me?.userId && s.inHand && !s.folded).length;
@@ -280,10 +283,20 @@ function Table(p: { view: TableView; sound: boolean; followingId: number | null;
           <div className="felt">
             <div className="felt-center">
               <div className="board">
-                {Array.from({ length: 5 }, (_, i) =>
-                  view.board[i] ? <PlayingCard key={`${view.handNo}-${view.board[i]}`} card={view.board[i]!} size="board" /> : <span key={i} className="card-slot" />,
-                )}
+                {Array.from({ length: 5 }, (_, i) => {
+                  const real = view.board[i];
+                  const rabbit = view.rabbit[i - view.board.length];
+                  if (real) return <PlayingCard key={`${view.handNo}-${real}`} card={real} size="board" />;
+                  if (rabbit)
+                    return (
+                      <span key={`${view.handNo}-r-${rabbit}`} className="rabbit-card" title="Rabbit hunt: this card would have come">
+                        <PlayingCard card={rabbit} size="board" />
+                      </span>
+                    );
+                  return <span key={i} className="card-slot" />;
+                })}
               </div>
+              {view.rabbit.length > 0 && <div className="rabbit-label">🐇 Rabbit hunt</div>}
               {totalPot > 0 && (
                 <div className="pot">
                   <ChipStack amount={totalPot} />
@@ -407,7 +420,9 @@ function Seat(p: {
       ) : s.lastAction ? (
         <div className={`tag act-${s.lastAction.split(" ")[0]!.toLowerCase().replace("-", "")}`}>{s.lastAction}</div>
       ) : null}
-      {isMe && !winner && (handLabel || equity) && <MyRead label={handLabel} equity={equity} opponents={p.opponents} />}
+      {isMe && !winner && (handLabel || equity) && (
+        <MyRead label={handLabel} equity={equity} opponents={p.opponents} rabbit={view.myRabbit} />
+      )}
       {onFollow && (
         <button
           className={`follow-btn ${followed ? "on" : ""}`}
@@ -421,11 +436,29 @@ function Seat(p: {
   );
 }
 
+const RABBIT_VERDICT: Record<RabbitOutcome | "none", string> = {
+  win: "You would have won",
+  tie: "You would have split the pot",
+  lose: "You would have lost",
+  none: "No showdown, so no verdict",
+};
+
 /**
  * Under your seat: what you hold ("Pocket Kings") and your chance to win, as a number and a bar.
  * The chance is against the opponents still in, holding random cards (their real cards are unknown).
+ * After you fold and the hand ends: how you'd have done against the hands that were shown.
  */
-function MyRead({ label, equity, opponents }: { label: string | null; equity: Equity | null; opponents: number }) {
+function MyRead({
+  label,
+  equity,
+  opponents,
+  rabbit,
+}: {
+  label: string | null;
+  equity: Equity | null;
+  opponents: number;
+  rabbit: TableView["myRabbit"];
+}) {
   const win = equity ? Math.round(equity.win * 100) : null;
   const tie = equity ? Math.round(equity.tie * 100) : 0;
   const level = win === null ? "" : win >= 50 ? "good" : win >= 25 ? "ok" : "low";
@@ -450,6 +483,14 @@ function MyRead({ label, equity, opponents }: { label: string | null; equity: Eq
         <div className="wc-bar">
           <span className="wc-win" style={{ width: `${equity.win * 100}%` }} />
           <span className="wc-tie" style={{ width: `${equity.tie * 100}%` }} />
+        </div>
+      )}
+      {rabbit && (
+        <div
+          className={`mr-rabbit ${rabbit.outcome ?? "none"}`}
+          title={rabbit.outcome ? "Compared with the hands shown at showdown, on the full board." : "The winner didn't have to show their cards."}
+        >
+          {RABBIT_VERDICT[rabbit.outcome ?? "none"]}
         </div>
       )}
     </div>

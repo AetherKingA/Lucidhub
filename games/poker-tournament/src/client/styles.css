@@ -234,6 +234,9 @@ table.data tr.current td { background: #11301f; }
 }
 .board { display: flex; gap: calc(var(--cw-board) * 0.1); }
 .card-slot { width: var(--cw-board); height: calc(var(--cw-board) * 1.4); border-radius: 8px; border: 2px dashed #ffffff14; }
+/* Rabbit hunt: the cards that would have come, faded so they never read as part of the real board. */
+.rabbit-card { display: flex; opacity: 0.5; filter: saturate(0.5); }
+.rabbit-label { font-size: 12px; font-weight: 700; color: #ffffffa6; letter-spacing: 0.05em; }
 .pot {
   white-space: nowrap;
   display: flex; align-items: center; gap: 8px; background: #000000a0; padding: 5px 16px 5px 10px; border-radius: 99px;
@@ -275,7 +278,9 @@ table.data tr.current td { background: #11301f; }
 @keyframes pulse { 50% { box-shadow: 0 0 0 5px #e3b34122, 0 0 34px #e3b34188; } }
 .seat.me .plate { border-color: #4f7a64; }
 .seat.me.acting .plate { border-color: var(--gold); }
-.seat.folded { opacity: 0.45; }
+.seat.folded:not(.me) { opacity: 0.45; }
+/* Your own folded seat: cards and plate dimmed, but your hand read (and rabbit hunt verdict) stays clear. */
+.seat.folded.me > :not(.my-read) { opacity: 0.55; }
 .seat.away .plate { opacity: 0.6; }
 .seat.winner .plate { border-color: var(--felt-bright); box-shadow: 0 0 0 3px #2aa86833, 0 0 34px #2aa868aa; }
 .seat.winner .stack { animation: pop 0.6s ease-out; }
@@ -552,6 +557,11 @@ kbd {
 .my-read.ok .wc-win { background: linear-gradient(90deg, #a6801f, var(--gold)); }
 .my-read.low .wc-win { background: linear-gradient(90deg, #8a2a24, #e5534b); }
 .wc-tie { background: #9fd0ff99; transition: width 0.4s ease; }
+.mr-rabbit { font-size: 13px; font-weight: 700; white-space: nowrap; }
+.mr-rabbit.win { color: #5ff0a0; }
+.mr-rabbit.tie { color: var(--gold); }
+.mr-rabbit.lose { color: #ff8f88; }
+.mr-rabbit.none { color: #ffffffa6; font-weight: 500; }
 @media (max-width: 760px) {
   /* Same idea on phones: hang your seat lower, cards tucked behind the plate, action tag to its left. */
   .seat-slot:has(.seat.me) { transform: translate(-50%, calc(-100% + 80px)); }
@@ -561,6 +571,7 @@ kbd {
   .my-read { min-width: 130px; padding: 4px 8px 6px; gap: 3px; }
   .mr-line { font-size: 11px; gap: 6px; }
   .mr-win b { font-size: 14px; }
+  .mr-rabbit { font-size: 11px; }
   .wc-bar { height: 4px; }
 }
 

@@ -39,6 +39,8 @@ export interface CreateOptions {
   decisionSeconds?: number;
   timeBankSeconds?: number;
   payoutPercent?: number;
+  /** "on" (default) or "off": show the rest of the board after a hand, and folders how they'd have done. */
+  rabbitHunt?: string;
 }
 
 const clamp = (v: unknown, min: number, max: number, fallback: number) => {
@@ -109,6 +111,7 @@ export class TournamentManager {
       decisionSeconds: clamp(opts.decisionSeconds, 5, 120, base.decisionSeconds),
       timeBankSeconds: clamp(opts.timeBankSeconds, 0, 600, base.timeBankSeconds),
       payoutPercent: clamp(opts.payoutPercent, 1, 50, base.payoutPercent),
+      rabbitHunt: opts.rabbitHunt !== "off",
     };
     const id = insertTournament(config, now);
     const t = Tournament.create(id, config, now, this.hooksFor(id));

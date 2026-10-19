@@ -114,6 +114,17 @@ function fields(): EventField[] {
     { name: "decisionSeconds", label: "Decision time (seconds)", type: "number", default: d.decisionSeconds, min: 5, max: 120 },
     { name: "timeBankSeconds", label: "Time bank (seconds)", type: "number", default: d.timeBankSeconds, min: 0, max: 600 },
     { name: "payoutPercent", label: "Paid places (% of field)", type: "number", default: d.payoutPercent, min: 1, max: 50 },
+    {
+      name: "rabbitHunt",
+      label: "Rabbit Hunt",
+      type: "select",
+      default: "on",
+      options: [
+        { value: "on", label: "On" },
+        { value: "off", label: "Off" },
+      ],
+      help: "After a hand, show the cards that would have come. Players who folded see their own cards and whether they'd have won against the hands that were shown.",
+    },
   ];
 }
 

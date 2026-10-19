@@ -119,6 +119,7 @@ export function defaultConfig(overrides: Partial<TournamentConfig> = {}): Tourna
     timeBankRefillSeconds: 15,
     payoutPercent: 15,
     chipMode: "fair",
+    rabbitHunt: true,
     ...overrides,
   };
 }

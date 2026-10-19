@@ -64,6 +64,9 @@ function inspect(w: Watcher, raw: string) {
   const v: TableView = msg.view;
   const complete = v.street === "complete";
   const allowed = new Set(v.board);
+  // Rabbit hunt: the rest of the board, only once the hand is over.
+  if (v.rabbit.length && !complete) w.leaks.push(`${w.name} got rabbit hunt cards during ${v.street}`);
+  if (complete) v.rabbit.forEach((c) => allowed.add(c));
   let revealedOthers = 0;
   for (const s of v.seats) {
     if (!s) continue;
@@ -109,9 +112,11 @@ function connect(name: string, token: string, userId: number | null, onMsg: (ws:
 
 for (const p of players) {
   const ws = connect(`Player ${p.n}`, p.token, p.userId, (sock, m) => {
-    // Call or check whenever it's our turn, so hands reach showdown.
+    // Mostly call or check so hands reach showdown, but fold to a bet now and then so some hands end
+    // early and show rabbit hunt cards (and the folder keeps seeing their own cards).
     if (m.type === "table" && m.view.legal) {
-      const a = m.view.legal.canCheck ? { type: "check" } : { type: "call" };
+      const l = m.view.legal;
+      const a = l.canCheck ? { type: "check" } : Math.random() < 0.35 ? { type: "fold" } : { type: "call" };
       setTimeout(() => sock.send(JSON.stringify({ type: "action", tournamentId, action: a })), 50);
     }
   });

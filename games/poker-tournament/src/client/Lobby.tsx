@@ -161,6 +161,7 @@ function CreateTournament() {
     breakMinutes: 5,
     decisionSeconds: 20,
     payoutPercent: 15,
+    rabbitHunt: "on",
   }));
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.type === "number" || k === "maxPlayers" ? Number(e.target.value) : e.target.value }));
@@ -234,6 +235,13 @@ function CreateTournament() {
         {num("breakMinutes", "Break length (min)", 0, 60)}
         {num("decisionSeconds", "Seconds per decision", 5, 120)}
         {num("payoutPercent", "% of field paid", 1, 50)}
+        <label>
+          Rabbit Hunt
+          <select value={form.rabbitHunt} onChange={set("rabbitHunt")}>
+            <option value="on">On — show the cards that would have come</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
       </div>
       <div className="row">
         <button className="btn primary" disabled={busy}>

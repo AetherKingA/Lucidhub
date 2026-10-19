@@ -1,9 +1,9 @@
 // Messages exchanged over the WebSocket, and the views the server sends. Shared by server and client
 // so both stay in sync.
 
-import type { Action, LegalActions, Street } from "./engine/hand.ts";
+import type { Action, LegalActions, RabbitOutcome, Street } from "./engine/hand.ts";
 
-export type { Action, LegalActions };
+export type { Action, LegalActions, RabbitOutcome };
 
 export interface UserInfo {
   id: number;
@@ -69,7 +69,10 @@ export interface SeatView {
   allIn: boolean;
   away: boolean;
   connected: boolean;
-  /** "??" for hidden cards. Empty when not dealt in. In host view: everyone's real cards, folded ones too. */
+  /**
+   * "??" for hidden cards. Empty when not dealt in, and for other players' folded hands. You keep seeing
+   * your own cards after folding. In host view: everyone's real cards, folded ones too.
+   */
   holeCards: string[];
   lastAction: string | null;
   /** Set when the hand is over. */
@@ -87,6 +90,10 @@ export interface TableView {
   handNo: number;
   street: Street | null;
   board: string[];
+  /** Rabbit hunt: the cards that would have finished the board. Only once the hand is complete. */
+  rabbit: string[];
+  /** Your own rabbit hunt after you folded: verdict null when the pot was won without a showdown. */
+  myRabbit: { handName: string; outcome: RabbitOutcome | null } | null;
   /** Chips in the middle, not counting bets in front of players this street. */
   pot: number;
   currentBet: number;

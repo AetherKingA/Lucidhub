@@ -386,6 +386,40 @@ function showdown(state: HandState): HandState {
 }
 
 /**
+ * Rabbit hunt: the cards that would have finished the board, dealt from where the deck stopped with the
+ * same burns as advance(). Empty until the hand is complete, and when the board already has five cards.
+ */
+export function runout(state: HandState): Card[] {
+  if (state.street !== "complete") return [];
+  const cards: Card[] = [];
+  let pos = state.deckPos;
+  for (let n = state.board.length; n < 5; ) {
+    pos++; // burn
+    const deal = n === 0 ? 3 : 1;
+    for (let k = 0; k < deal; k++) cards.push(state.deck[pos++]!);
+    n += deal;
+  }
+  return cards;
+}
+
+export type RabbitOutcome = "win" | "tie" | "lose";
+
+/**
+ * How a folded player's hand would have finished on the full board. The verdict only compares against
+ * hands shown at showdown, so it's null when the pot was won without one: nobody learns unshown cards.
+ */
+export function rabbitResult(state: HandState, playerId: string): { handName: string; outcome: RabbitOutcome | null } | null {
+  const p = state.players.find((x) => x.playerId === playerId);
+  if (state.street !== "complete" || !p?.folded) return null;
+  const board = [...state.board, ...runout(state)];
+  const mine = evaluate([...p.holeCards, ...board]);
+  const shown = state.result?.showdown ?? [];
+  if (!shown.length) return { handName: mine.name, outcome: null };
+  const best = Math.max(...shown.map((s) => evaluate([...s.holeCards, ...board]).score));
+  return { handName: mine.name, outcome: mine.score > best ? "win" : mine.score === best ? "tie" : "lose" };
+}
+
+/**
  * What a given viewer is allowed to see: their own hole cards, everyone's cards once revealed at
  * showdown, and never the deck. Pass null for spectators.
  */

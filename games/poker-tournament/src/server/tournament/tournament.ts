@@ -10,8 +10,17 @@
 // server calls tick(now) a few times a second. That makes pausing, crash recovery and tests simple.
 // All state is plain JSON (meta + one object per table) so it can be saved and restored as-is.
 
-import { shuffledDeck } from "../../shared/engine/cards.ts";
-import { type Action, IllegalActionError, applyAction, legalActions, startHand } from "../../shared/engine/hand.ts";
+import { type Card, shuffledDeck } from "../../shared/engine/cards.ts";
+import {
+  type Action,
+  type HandState,
+  IllegalActionError,
+  applyAction,
+  legalActions,
+  rabbitResult,
+  runout,
+  startHand,
+} from "../../shared/engine/hand.ts";
 import type { SeatView, TableView, TournamentDetail, TournamentSummary } from "../../shared/protocol.ts";
 import { bracketShape, evenSplit, payoutPercents, payoutPoints, pointsForPlace } from "./structure.ts";
 import type { BracketNode, Clock, SeatPlayer, TableState, TournamentConfig, TournamentMeta, LobbyAccess } from "./types.ts";
@@ -55,6 +64,8 @@ export const noopHooks: TournamentHooks = {
 /** How long a finished hand's result stays on screen before the next hand. */
 export const SHOWDOWN_MS = 4000;
 export const UNCONTESTED_MS = 1500;
+/** An uncontested hand with rabbit hunt cards to show: long enough to see them. */
+export const RABBIT_MS = 3000;
 
 export interface NewEntrant {
   id: number;
@@ -69,15 +80,24 @@ export class Tournament {
   tables: Map<number, TableState>;
   hooks: TournamentHooks;
   private random: () => number;
+  /** Deck for each new hand. Tests pass a stacked one. */
+  private deck: () => Card[];
 
-  constructor(meta: TournamentMeta, tables: Map<number, TableState>, hooks: TournamentHooks = noopHooks, random = Math.random) {
+  constructor(
+    meta: TournamentMeta,
+    tables: Map<number, TableState>,
+    hooks: TournamentHooks = noopHooks,
+    random = Math.random,
+    deck: () => Card[] = shuffledDeck,
+  ) {
     this.meta = meta;
     this.tables = tables;
     this.hooks = hooks;
     this.random = random;
+    this.deck = deck;
   }
 
-  static create(id: number, config: TournamentConfig, now: number, hooks?: TournamentHooks, random?: () => number) {
+  static create(id: number, config: TournamentConfig, now: number, hooks?: TournamentHooks, random?: () => number, deck?: () => Card[]) {
     const meta: TournamentMeta = {
       id,
       config,
@@ -94,7 +114,7 @@ export class Tournament {
       finishedAt: null,
       savedAt: now,
     };
-    return new Tournament(meta, new Map(), hooks, random);
+    return new Tournament(meta, new Map(), hooks, random, deck);
   }
 
   get id() {
@@ -430,12 +450,17 @@ export class Tournament {
     const h = t.hand!;
     if (h.street === "complete") {
       t.actionStartedAt = null;
-      t.handDoneAt = now + (h.result!.showdown.length ? SHOWDOWN_MS : UNCONTESTED_MS);
+      t.handDoneAt = now + (h.result!.showdown.length ? SHOWDOWN_MS : this.rabbitCards(h).length ? RABBIT_MS : UNCONTESTED_MS);
       this.hooks.handComplete(t.id, this.handSummary(t));
     } else {
       t.actionStartedAt = now;
     }
     this.touchTable(t);
+  }
+
+  /** The rabbit hunt cards for a finished hand, when the setting is on (missing on older tournaments: on). */
+  private rabbitCards(h: HandState) {
+    return this.config.rabbitHunt === false ? [] : runout(h);
   }
 
   /** "Bot 3 wins 1,250 with Two Pair" for each winner of the hand that just ended. */
@@ -462,7 +487,7 @@ export class Tournament {
         bigBlind: level.bigBlind,
         ante: level.ante,
       },
-      shuffledDeck(),
+      this.deck(),
     );
     t.handNo++;
     this.afterHandChange(t, now);
@@ -843,7 +868,8 @@ export class Tournament {
         allIn: p?.allIn ?? false,
         away: s.away,
         connected: this.hooks.isConnected(s.userId),
-        holeCards: !p ? [] : reveal ? p.holeCards : p.folded ? [] : s.userId === viewerId || shown ? p.holeCards : p.holeCards.map(() => "??"),
+        // You keep seeing your own cards after folding; other folded hands stay hidden.
+        holeCards: !p ? [] : reveal || s.userId === viewerId ? p.holeCards : p.folded ? [] : shown ? p.holeCards : p.holeCards.map(() => "??"),
         lastAction: lastAction.get(pid) ?? null,
         won: payouts[pid] ?? 0,
         handName: shown?.handName ?? null,
@@ -863,6 +889,8 @@ export class Tournament {
       handNo: t.handNo,
       street: h?.street ?? null,
       board: h?.board ?? [],
+      rabbit: h && complete ? this.rabbitCards(h) : [],
+      myRabbit: h && viewerId !== null && this.config.rabbitHunt !== false ? rabbitResult(h, String(viewerId)) : null,
       pot: h && !complete ? h.players.reduce((n, p) => n + p.contributed - p.bet, 0) : 0,
       currentBet: h?.currentBet ?? 0,
       toActSeat,

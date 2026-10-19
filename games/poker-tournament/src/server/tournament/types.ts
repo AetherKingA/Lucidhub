@@ -35,6 +35,11 @@ export interface TournamentConfig {
    * Missing on tournaments saved before this setting existed, which played Fair Play.
    */
   chipMode?: ChipMode;
+  /**
+   * Rabbit hunt: after a hand, show the cards that would have finished the board, and tell players who
+   * folded how their hand would have done. Missing on tournaments saved before this setting: on.
+   */
+  rabbitHunt?: boolean;
 }
 
 export type ChipMode = "fair" | "bully";
