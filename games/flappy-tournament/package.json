@@ -1,0 +1,40 @@
+{
+  "name": "flappy-tournament",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "npm run build && node --disable-warning=ExperimentalWarning src/server/index.ts",
+    "serve": "node --disable-warning=ExperimentalWarning src/server/index.ts",
+    "build": "vite build",
+    "dev": "concurrently -n server,client -c green,cyan \"node --disable-warning=ExperimentalWarning --watch src/server/index.ts\" \"vite\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "bots": "node --disable-warning=ExperimentalWarning scripts/bots.ts",
+    "dev-login": "node --disable-warning=ExperimentalWarning scripts/dev-login.ts"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.3",
+    "@fastify/static": "^10.1.6",
+    "@fastify/websocket": "^11.3.4",
+    "fastify": "^5.12.7",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/ws": "^8.18.2",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.6",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
+  }
+}
