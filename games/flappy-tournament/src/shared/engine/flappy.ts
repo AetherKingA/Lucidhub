@@ -168,12 +168,18 @@ export function compareRuns(a: { distance: number; setAt: number }, b: { distanc
 export function autopilot(seed: number, maxTicks: number, skill = 1, random = Math.random): number[] {
   const bird = newBird();
   const flaps: number[] = [];
+  // One aiming error per pipe (not per tick), so a weaker pilot misjudges some pipes rather than twitching.
+  let aimFor = -1;
+  let wobble = 0;
   while (!bird.dead && bird.tick < maxTicks) {
     const wx = birdWorldX(bird.tick);
     // Aim for the next pipe only once the bird is fully clear of the current one.
     const i = Math.max(0, Math.floor((wx - FIRST_PIPE_X - PIPE_W - BIRD_R) / PIPE_SPACING) + 1);
     const target = bird.tick * SPEED < FIRST_PIPE_X - 120 ? WORLD_H * 0.42 : pipeAt(seed, i).gapY + 14;
-    const wobble = skill >= 1 ? 0 : (random() - 0.5) * 80 * (1 - skill);
+    if (i !== aimFor) {
+      aimFor = i;
+      wobble = skill >= 1 ? 0 : (random() - 0.5) * 90 * (1 - skill);
+    }
     const flap = bird.y > target + wobble && bird.vy >= 0;
     if (flap) flaps.push(bird.tick);
     step(seed, bird, flap);
