@@ -381,7 +381,7 @@ describe("HTTP API", () => {
 
     const admin = startSession({ discordId: "100", username: "Admin", avatar: null });
     const call = (method: "GET" | "POST" | "PUT", url: string, payload?: object) => app.inject({ method, url, payload, cookies: { hub_sid: admin.token } });
-    expect((await call("GET", `/api/events/${id}/players`)).json()).toEqual(lobby);
+    expect((await call("GET", `/api/events/${id}/players`)).json()).toEqual({ ...lobby, locations: false });
     expect((await call("POST", `/api/events/${id}/players/${did(1)}/approve`, {})).statusCode).toBe(200);
     expect((await call("POST", `/api/events/${id}/players/${did(1)}/kick`, {})).statusCode).toBe(200);
     expect((await call("PUT", `/api/events/${id}/access`, { access: "open" })).statusCode).toBe(200);

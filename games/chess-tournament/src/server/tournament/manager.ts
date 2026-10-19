@@ -88,6 +88,11 @@ export class TournamentManager {
     return this.tournaments.get(id);
   }
 
+  /** Has the site open right now. */
+  isOnline(userId: number) {
+    return this.notifier.isConnected(userId);
+  }
+
   create(opts: CreateOptions, now: number): Tournament {
     const base = defaultConfig();
     const tc = parseTimeControl(opts.timeControl);

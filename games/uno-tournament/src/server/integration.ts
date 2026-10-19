@@ -6,7 +6,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { config } from "./config.ts";
-import { discordIdOf, findUserByDiscordId } from "./db.ts";
+import { type PlayerRecord, discordIdOf, findUserByDiscordId, playerRecord } from "./db.ts";
 import { runAdminOp } from "./routes.ts";
 import type { CreateOptions, TournamentManager } from "./tournament/manager.ts";
 import { loadEndedMetas, loadMeta, loadResults } from "./tournament/store.ts";
@@ -133,16 +133,29 @@ export interface EventPlayer {
   avatarUrl: string;
   status: "pending" | "registered" | "playing" | "waiting" | "out" | "removed";
   place: number | null;
+  /** When they registered, or asked to join. */
+  joinedAt: number;
+  online: boolean;
+  record: PlayerRecord;
 }
 
 const STATUS_ORDER: EventPlayer["status"][] = ["pending", "playing", "waiting", "registered", "out", "removed"];
 
 /** Everyone in a tournament, plus (before the start) everyone asking to join. For the hub's lobby panel. */
-function playerList(m: TournamentMeta): EventPlayer[] {
+function playerList(m: TournamentMeta, manager: TournamentManager): EventPlayer[] {
   const kicked = new Set(m.kicked ?? []);
   const pending: EventPlayer[] =
     m.status === "registering"
-      ? Object.values(m.pending ?? {}).map((p) => ({ discordId: discordIdOf(p.userId) ?? "", username: p.username, avatarUrl: p.avatarUrl, status: "pending", place: null }))
+      ? Object.values(m.pending ?? {}).map((p) => ({
+          discordId: discordIdOf(p.userId) ?? "",
+          username: p.username,
+          avatarUrl: p.avatarUrl,
+          status: "pending",
+          place: null,
+          joinedAt: p.requestedAt,
+          online: manager.isOnline(p.userId),
+          record: playerRecord(p.userId),
+        }))
       : [];
   const entrants = Object.values(m.entrants).map(
     (e): EventPlayer => ({
@@ -161,6 +174,9 @@ function playerList(m: TournamentMeta): EventPlayer[] {
                 ? "waiting"
                 : "out",
       place: e.place,
+      joinedAt: e.registeredAt,
+      online: manager.isOnline(e.userId),
+      record: playerRecord(e.userId),
     }),
   );
   return [...pending, ...entrants].sort(
@@ -240,14 +256,14 @@ export function registerIntegrationRoutes(app: FastifyInstance, manager: Tournam
         throw err;
       }
       console.log(`[hub] ${what} in "${t.config.name}"`);
-      return { access: t.access, players: playerList(t.meta) };
+      return { access: t.access, players: playerList(t.meta, manager) };
     };
 
     scope.get<{ Params: { id: string } }>("/api/integration/events/:id/players", async (req, reply) => {
       const id = parseId(req.params.id);
       const meta = manager.get(id)?.meta ?? loadMeta(id);
       if (!meta) return reply.code(404).send({ error: "not_found" });
-      return { access: meta.access ?? "open", players: playerList(meta) };
+      return { access: meta.access ?? "open", players: playerList(meta, manager) };
     });
 
     scope.post<{ Params: { id: string }; Body: { access?: string } | undefined }>("/api/integration/events/:id/access", async (req, reply) => {

@@ -260,3 +260,14 @@ label.check input { width: auto; accent-color: var(--accent-text); }
 .card h4 { margin: 16px 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
 .player { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
 .player img { border-radius: 50%; }
+
+/* Player details in the Lobby panel */
+.player .pill { font-size: 11px; padding: 1px 7px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex: none; }
+.dot.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.player-details { flex: 1 1 100%; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 4px 0 2px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; font-size: 13px; }
+.player-details dt { color: var(--muted); }
+.player-details dd { margin: 0; overflow-wrap: anywhere; }
+.player-details ul { list-style: none; margin: 0; padding: 0; }
+.player-details li { display: block; padding: 0 0 4px; border: 0; }
+@media (max-width: 560px) { .player-details { grid-template-columns: minmax(0, 1fr); } .player-details dd { margin-bottom: 6px; } }

@@ -1,10 +1,11 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import type { GameOp, LobbyAccess, Overview, PlayerAction, PrizeRule } from "../shared/protocol.ts";
+import type { GameLobby, GameOp, LobbyAccess, Overview, PlayerAction, PrizeRule } from "../shared/protocol.ts";
 import { AwardActionError, cancelAward, fillWaitingAwards, awardEvent, listAwards, markAwardManual, resendAward } from "./awards.ts";
 import { adminFromRequest, requireAdmin } from "./auth.ts";
 import { BlindPresetError, deleteBlindPreset, listBlindPresets, saveBlindPreset } from "./blindPresets.ts";
 import type { Bot } from "./bot.ts";
 import { audit, db, getSettings, recentAudit, saveSettings } from "./db.ts";
+import { geoipAvailable, locate } from "./geoip.ts";
 import { EventLockedError, getEvent, listEvents, setAnnounceChannel, setRules, upsertEvent } from "./events.ts";
 import {
   GameInputError,
@@ -43,6 +44,13 @@ const OPS = new Set<GameOp>(["start", "pause", "resume", "cancel"]);
 const PLAYER_ACTIONS = new Set<PlayerAction>(["approve", "deny", "kick"]);
 const ACTION_WORDS: Record<PlayerAction, string> = { approve: "player approved", deny: "join request turned down", kick: "player kicked" };
 const SNOWFLAKE = /^\d{5,25}$/;
+
+/** Adds a rough location to every IP the game reports (offline lookup; nothing leaves this PC). */
+function withLocations(lobby: GameLobby): GameLobby {
+  const locations = geoipAvailable();
+  for (const p of lobby.players) for (const i of p.record?.ips ?? []) i.location = locate(i.ip);
+  return { ...lobby, locations };
+}
 
 const id = (req: FastifyRequest) => Number((req.params as { id: string }).id);
 
@@ -221,7 +229,7 @@ export function registerRoutes(app: FastifyInstance, bot: Bot, servers: ProcessM
     const ev = getEvent(id(req));
     if (!ev) return reply.code(404).send({ error: "Event not found" });
     try {
-      return await gameClient.players(getGame(ev.gameId)!, ev.externalId);
+      return withLocations(await gameClient.players(getGame(ev.gameId)!, ev.externalId));
     } catch (err) {
       if (err instanceof GameRequestError && err.status === 404 && ev.access === null)
         return reply.code(404).send({ error: `${ev.gameName} doesn't support lobby controls yet` });
@@ -238,7 +246,7 @@ export function registerRoutes(app: FastifyInstance, bot: Bot, servers: ProcessM
     const lobby = await gameClient.setAccess(g, ev.externalId, access);
     audit(actor(req), `lobby ${access}`, ev.name);
     void syncGame(g);
-    return lobby;
+    return withLocations(lobby);
   });
 
   app.post<{ Params: { id: string; discordId: string; action: string } }>("/api/events/:id/players/:discordId/:action", async (req, reply) => {
@@ -252,7 +260,7 @@ export function registerRoutes(app: FastifyInstance, bot: Bot, servers: ProcessM
     const who = lobby.players.find((p) => p.discordId === req.params.discordId)?.username ?? req.params.discordId;
     audit(actor(req), ACTION_WORDS[action], `${ev.name}: ${who}`);
     void syncGame(g);
-    return lobby;
+    return withLocations(lobby);
   });
 
   // ---------------------------------------------------------------- prizes

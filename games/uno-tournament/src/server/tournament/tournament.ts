@@ -210,6 +210,7 @@ export class Tournament {
     const e = m.entrants[userId];
     const asked = Boolean(m.pending?.[userId]);
     if (!e && !asked) throw new TournamentError("That player isn't in this tournament");
+    if (m.kicked?.includes(userId)) throw new TournamentError("That player was already kicked");
     if (e && e.place !== null) throw new TournamentError("That player is already out");
     if (!(m.kicked ??= []).includes(userId)) m.kicked.push(userId);
     if (asked) delete m.pending![userId];

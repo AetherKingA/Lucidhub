@@ -73,12 +73,40 @@ export interface GamePlayer {
   avatarUrl: string;
   status: PlayerStatus;
   place: number | null;
+  /** Optional details for the admin. When they registered or asked to join. */
+  joinedAt?: number;
+  /** Has the game site open right now. */
+  online?: boolean;
+  record?: PlayerRecord;
+}
+
+/** What a game site knows about a player's account. */
+export interface PlayerRecord {
+  firstVisit: number | null;
+  lastVisit: number | null;
+  /** Latest first. `location` is filled in by the hub. */
+  ips: { ip: string; firstSeen: number; lastSeen: number; location?: IpLocation | null }[];
+  /** Other accounts that have used one of these IPs. */
+  sharedIpWith: { discordId: string; username: string }[];
+}
+
+/** Rough location of an IP, from the hub's offline database. `local`: this PC, a home network or Tailscale. */
+export interface IpLocation {
+  city: string | null;
+  region: string | null;
+  country: string | null;
+  countryCode: string | null;
+  /** Who runs the network (internet provider, hosting company, VPN). */
+  network: string | null;
+  local?: boolean;
 }
 
 /** GET /api/integration/events/:id/players, and the answer to every lobby change. */
 export interface GameLobby {
   access: LobbyAccess;
   players: GamePlayer[];
+  /** Added by the hub: whether IP locations could be looked up (the database is installed). */
+  locations?: boolean;
 }
 
 export type PlayerAction = "approve" | "deny" | "kick";

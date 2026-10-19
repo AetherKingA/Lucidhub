@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Award, BlindLevel, GameField, GameInfo, GameLobby, GameOp, GamePlayer, HubEvent, LobbyAccess, PlayerAction, PrizeRule } from "../shared/protocol.ts";
+import type { Award, BlindLevel, GameField, GameInfo, GameLobby, GameOp, GamePlayer, HubEvent, IpLocation, LobbyAccess, PlayerAction, PrizeRule } from "../shared/protocol.ts";
 import { api, fmtAgo, fmtTime, ordinal, placeLabel, useApi } from "./api.ts";
 import { BlindEditor, levelProblems } from "./Blinds.tsx";
 import { navigate } from "./router.ts";
@@ -397,9 +397,26 @@ function LobbyPanel({ event, onChange }: { event: HubEvent; onChange: () => Prom
   const { data, error, reload } = useApi<GameLobby>(`/api/events/${event.id}/players`, 3000);
   const [shown, setShown] = useState<GameLobby | null>(null);
   const { busy, run } = useAction();
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   useEffect(() => {
     if (data) setShown(data);
   }, [data]);
+  const toggle = (discordId: string) =>
+    setExpanded((s) => {
+      const next = new Set(s);
+      if (!next.delete(discordId)) next.add(discordId);
+      return next;
+    });
+  const details = (p: GamePlayer) => (
+    <>
+      {p.record && (
+        <button className="link" onClick={() => toggle(p.discordId)}>
+          {expanded.has(p.discordId) ? "Hide details" : "Details"}
+        </button>
+      )}
+      {expanded.has(p.discordId) && <PlayerDetails p={p} locations={Boolean(shown?.locations)} />}
+    </>
+  );
 
   const change = (path: string, init: { method?: string; body: unknown }, label: string) =>
     run(async () => {
@@ -471,6 +488,7 @@ function LobbyPanel({ event, onChange }: { event: HubEvent; onChange: () => Prom
                 <button className="btn ghost small-btn" disabled={busy} onClick={() => act(p, "deny")}>
                   Turn down
                 </button>
+                {details(p)}
               </li>
             ))}
           </ul>
@@ -496,6 +514,7 @@ function LobbyPanel({ event, onChange }: { event: HubEvent; onChange: () => Prom
                   Kick
                 </button>
               )}
+              {details(p)}
             </li>
           ))}
         </ul>
@@ -505,11 +524,83 @@ function LobbyPanel({ event, onChange }: { event: HubEvent; onChange: () => Prom
 }
 
 function PlayerName({ p }: { p: GamePlayer }) {
+  const where = p.record?.ips[0]?.location;
   return (
     <strong className="player">
+      {p.online !== undefined && <span className={`dot ${p.online ? "on" : ""}`} title={p.online ? "On the game site now" : "Not on the game site"} />}
       {p.avatarUrl && <img src={p.avatarUrl} alt="" width={22} height={22} />}
       {p.username}
+      {where?.countryCode && <span className="pill" title={placeName(where)}>{where.countryCode}</span>}
+      {p.record?.sharedIpWith.length ? <span className="pill warnpill" title="Another account has used the same IP">Shared IP</span> : null}
     </strong>
+  );
+}
+
+/** When a Discord account was made: it is encoded in the ID. */
+const discordCreated = (id: string) => (/^\d{15,25}$/.test(id) ? Number((BigInt(id) >> 22n) + 1420070400000n) : null);
+
+/** A day with its year: account ages matter (a brand-new account can be someone's second one). */
+const fmtDate = (t: number | null) => (t ? new Date(t).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) : "—");
+
+const placeName = (l: IpLocation) => (l.local ? "This PC or a private network" : [l.city, l.region, l.country].filter(Boolean).join(", ") || "Unknown place");
+
+/** Everything the game and the hub know about a player. */
+function PlayerDetails({ p, locations }: { p: GamePlayer; locations: boolean }) {
+  const r = p.record!;
+  const created = discordCreated(p.discordId);
+  return (
+    <dl className="player-details">
+      <dt>Discord</dt>
+      <dd>
+        <span className="mono">{p.discordId}</span>
+        {created && <span className="muted"> · account made {fmtDate(created)}</span>}
+      </dd>
+      {p.joinedAt && (
+        <>
+          <dt>{p.status === "pending" ? "Asked to join" : "Joined this event"}</dt>
+          <dd>{fmtAgo(p.joinedAt)}</dd>
+        </>
+      )}
+      <dt>On the game site</dt>
+      <dd>
+        {p.online ? <span className="ok">Online now</span> : <>Last seen {fmtAgo(r.lastVisit)}</>}
+        <span className="muted"> · first visit {fmtDate(r.firstVisit)}</span>
+      </dd>
+      <dt>IP addresses</dt>
+      <dd>
+        {r.ips.length === 0 ? (
+          <span className="muted">None recorded yet</span>
+        ) : (
+          <ul>
+            {r.ips.map((i) => (
+              <li key={i.ip}>
+                <span className="mono">{i.ip}</span>
+                {i.location ? (
+                  <>
+                    {" "}
+                    · {placeName(i.location)}
+                    {i.location.network && <span className="muted"> · {i.location.network}</span>}
+                  </>
+                ) : null}
+                <span className="muted"> · last used {fmtAgo(i.lastSeen)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {!locations && r.ips.length > 0 && <small className="muted">Locations appear once the IP location database is installed (see SETUP.md).</small>}
+        {locations && r.ips.length > 0 && (
+          <small className="muted">
+            <a href="https://db-ip.com" target="_blank" rel="noreferrer">IP Geolocation by DB-IP</a>
+          </small>
+        )}
+      </dd>
+      {r.sharedIpWith.length > 0 && (
+        <>
+          <dt>Same IP as</dt>
+          <dd className="warn">{r.sharedIpWith.map((o) => o.username).join(", ")}</dd>
+        </>
+      )}
+    </dl>
   );
 }
 
