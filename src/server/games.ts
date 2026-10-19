@@ -117,6 +117,7 @@ export interface LaunchInput {
 const KNOWN_GAMES: Record<string, { folder: string; name: string; baseUrl: string; funnelPort: number }> = {
   poker: { folder: "games/poker-tournament", name: "Poker Night", baseUrl: "http://127.0.0.1:3000", funnelPort: 443 },
   uno: { folder: "games/uno-tournament", name: "Uno Night", baseUrl: "http://127.0.0.1:3001", funnelPort: 8443 },
+  chess: { folder: "games/chess-tournament", name: "Chess Night", baseUrl: "http://127.0.0.1:3002", funnelPort: 10000 },
 };
 
 export function suggestedLaunch(

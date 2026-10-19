@@ -1,7 +1,7 @@
 # LucidHub — setup
 
-LucidHub is the one thing you run. It's your admin dashboard, it runs your games (Poker Night and
-Uno Night now, chess later), opens them to players on the internet, and its Discord bot DMs each
+LucidHub is the one thing you run. It's your admin dashboard, it runs your games (Poker Night, Uno
+Night and Chess Night), opens them to players on the internet, and its Discord bot DMs each
 winner their prize the moment an event ends and announces the winners in your server. Set it up once
 and it runs by itself.
 
@@ -10,7 +10,7 @@ and it runs by itself.
 - **One data folder:** `event-hub/data/`. The hub's data is in `hub.db`, each game's in
   `games/<game>/`, server logs in `logs/`.
 - **Games live in `games/`** (Poker Night is `games/poker-tournament`, Uno Night is
-  `games/uno-tournament`). Everything is one git repo and one `npm install`.
+  `games/uno-tournament`, Chess Night is `games/chess-tournament`). Everything is one git repo and one `npm install`.
 
 The dashboard itself is **only reachable from this PC** (it holds your prize codes). Players reach
 the games through Tailscale Funnel.
@@ -51,6 +51,8 @@ Click it, approve, and press **Restart**.
    **Uno Night** works the same way: **Connect a game**, key `uno`, and everything is pre-filled
    (folder `games\uno-tournament`, address `http://127.0.0.1:3001`, public on port **8443** so it
    doesn't clash with Poker Night on the main address).
+   **Chess Night** too: key `chess`, folder `gameschess-tournament`, address
+   `http://127.0.0.1:3002`, public on port **10000**.
 4. When a game is running, the Games page shows the address players use and **the Discord redirect
    it needs** (each game has its own). Copy that redirect into Discord (OAuth2 → Redirects → Save
    Changes). Without it, players get "Invalid OAuth2 redirect_uri" when they sign in.
@@ -72,7 +74,8 @@ Click it, approve, and press **Restart**.
 ## Running events
 
 - **New event:** pick the game, fill in its options (for poker: start time, player cap, stack, blind
-  speed…; for Uno: players per table, hands to win a table, stacking…), add prizes by place (1st →
+  speed…; for Uno: players per table, hands to win a table, stacking…; for chess: games to win a match,
+  time control), add prizes by place (1st →
   $50 card, 2nd–3rd → game key), pick the announcement channel, and create it. It appears on the
   game site straight away.
 - **That's it.** When the event ends, each winner gets a DM with their prize and the winners are
@@ -80,8 +83,8 @@ Click it, approve, and press **Restart**.
 - Tournaments created on a game site directly also show up under **Events**; open one to
   attach prizes before it ends. You can even add prizes after an event finished and they're sent then.
 - **Save a ladder** you use often ("Weekly poker") and load it on the next event in one click.
-- How the tournaments work (format, pausing, shared-IP flags): `games/poker-tournament/README.md` and
-  `games/uno-tournament/README.md`.
+- How the tournaments work (format, pausing, shared-IP flags): `games/poker-tournament/README.md`,
+  `games/uno-tournament/README.md` and `games/chess-tournament/README.md`.
 
 ### What happens when something goes wrong
 

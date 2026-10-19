@@ -167,7 +167,10 @@ describe("suggestedLaunch", () => {
     expect(poker).toMatchObject({ name: "Poker Night", baseUrl: "http://127.0.0.1:3000", launchCmd: "npm start", publicAccess: true, funnelPort: 443 });
     expect(uno).toMatchObject({ name: "Uno Night", baseUrl: "http://127.0.0.1:3001", launchCmd: "npm start", publicAccess: true, funnelPort: 8443 });
     expect(uno.launchDir.endsWith(`games${sep}uno-tournament`)).toBe(true);
-    expect(suggestedLaunch("chess")).toBeNull();
+    const chess = suggestedLaunch("chess")!;
+    expect(chess).toMatchObject({ name: "Chess Night", baseUrl: "http://127.0.0.1:3002", launchCmd: "npm start", publicAccess: true, funnelPort: 10000 });
+    expect(chess.launchDir.endsWith(`games${sep}chess-tournament`)).toBe(true);
+    expect(suggestedLaunch("checkers")).toBeNull();
     expect(suggestedLaunch("toString")).toBeNull();
   });
 });

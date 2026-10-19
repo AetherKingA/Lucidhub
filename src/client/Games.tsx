@@ -52,7 +52,7 @@ interface Launch {
 
 type Suggestion = { name?: string; baseUrl?: string; launchDir?: string; launchCmd?: string; publicAccess?: boolean; funnelPort?: number };
 
-/** Fills in the settings for a game LucidHub knows (Poker Night, Uno Night in games/). */
+/** Fills in the settings for a game LucidHub knows (Poker Night, Uno Night, Chess Night in games/). */
 function useSuggestion(key: string, skip: boolean, apply: (s: Suggestion) => void) {
   useEffect(() => {
     if (skip || !key) return;
@@ -65,7 +65,7 @@ function useSuggestion(key: string, skip: boolean, apply: (s: Suggestion) => voi
 function AddGame({ onDone }: { onDone: () => void }) {
   const { games } = useHub();
   // Suggest the first game in games/ that isn't connected yet.
-  const [key, setKey] = useState(() => (games.some((g) => g.key === "poker") && !games.some((g) => g.key === "uno") ? "uno" : "poker"));
+  const [key, setKey] = useState(() => ["poker", "uno", "chess"].find((k) => !games.some((g) => g.key === k)) ?? "poker");
   const [name, setName] = useState("");
   const [baseUrl, setBaseUrl] = useState("http://127.0.0.1:3000");
   const [launch, setLaunch] = useState<Launch>({ launchDir: "", launchCmd: "", autostart: true, publicAccess: false, funnelPort: 443 });
