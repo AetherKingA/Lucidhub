@@ -60,13 +60,24 @@ function Login({ error }: { error: string | null }) {
   );
 }
 
+// icon: a 24×24 line-icon path, drawn with the current text color.
 const NAV: { page: Page; href: string; label: string; icon: string }[] = [
-  { page: "overview", href: "#/", label: "Overview", icon: "◎" },
-  { page: "events", href: "#/events", label: "Events", icon: "▦" },
-  { page: "prizes", href: "#/prizes", label: "Prizes", icon: "◆" },
-  { page: "awards", href: "#/awards", label: "Deliveries", icon: "✉" },
-  { page: "games", href: "#/games", label: "Games", icon: "♞" },
-  { page: "settings", href: "#/settings", label: "Settings", icon: "⚙" },
+  { page: "overview", href: "#/", label: "Overview", icon: "M3 3h7v9H3zM14 3h7v5h-7zM14 12h7v9h-7zM3 16h7v5H3z" },
+  { page: "events", href: "#/events", label: "Events", icon: "M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" },
+  {
+    page: "prizes",
+    href: "#/prizes",
+    label: "Prizes",
+    icon: "M20 12v10H4V12M2 7h20v5H2zM12 22V7M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7zM12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z",
+  },
+  { page: "awards", href: "#/awards", label: "Deliveries", icon: "M22 2 11 13M22 2l-7 20-4-9-9-4z" },
+  {
+    page: "games",
+    href: "#/games",
+    label: "Games",
+    icon: "M6 11h4M8 9v4M15 12h.01M18 10h.01M17.32 5H6.68a4 4 0 0 0-3.98 3.59L2 15a3 3 0 0 0 5.12 2.12L9 15h6l1.88 2.12A3 3 0 0 0 22 15l-.7-6.41A4 4 0 0 0 17.32 5z",
+  },
+  { page: "settings", href: "#/settings", label: "Settings", icon: "M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" },
 ];
 
 function Shell({ admin, onLogout }: { admin: AdminInfo; onLogout: () => void }) {
@@ -91,7 +102,11 @@ function Shell({ admin, onLogout }: { admin: AdminInfo; onLogout: () => void }) 
         <nav>
           {NAV.map((n) => (
             <a key={n.page} href={n.href} className={active === n.page ? "active" : ""}>
-              <span className="icon">{n.icon}</span>
+              <span className="icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d={n.icon} />
+                </svg>
+              </span>
               <span>{n.label}</span>
             </a>
           ))}
