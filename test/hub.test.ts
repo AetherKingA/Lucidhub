@@ -44,6 +44,20 @@ class FakeMessenger implements Messenger {
   }
 }
 
+// ---------------------------------------------------------------- events
+
+describe("upsertEvent watchUrl", () => {
+  it("stores http(s) links, drops other schemes, and clears when the field is missing", () => {
+    const game = addGame({ key: `g${uid()}`, name: "Test game", baseUrl: "http://game.test" });
+    const base: GameEvent = { id: uid(), name: "Watched", status: "running", startTime: Date.now(), entrants: 4, maxPlayers: null, startedAt: null, finishedAt: null, url: null };
+    const url = "https://game.test/#/t/1/watch";
+    expect(upsertEvent(game.id, { ...base, watchUrl: url }).watchUrl).toBe(url);
+    expect(upsertEvent(game.id, { ...base, watchUrl: "javascript:alert(1)" }).watchUrl).toBeNull();
+    upsertEvent(game.id, { ...base, watchUrl: url });
+    expect(upsertEvent(game.id, base).watchUrl).toBeNull();
+  });
+});
+
 // ---------------------------------------------------------------- signing
 
 describe("signing", () => {

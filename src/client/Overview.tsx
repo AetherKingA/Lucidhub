@@ -64,6 +64,11 @@ export function OverviewPage() {
                     {e.gameName} · {e.entrants} players
                   </span>
                   <EventStatus status={e.status} />
+                  {e.status === "running" && e.watchUrl && (
+                    <a className="small" href={e.watchUrl} target="_blank" rel="noreferrer">
+                      Watch ↗
+                    </a>
+                  )}
                 </li>
               ))}
             </ul>

@@ -53,10 +53,13 @@ GameField = { name, label, type: "text" | "number" | "datetime" | "select", defa
               options?: { value, label }[], help? }        // datetime values are epoch ms
 GameEvent = { id: string, name, status: "registering" | "running" | "finished" | "cancelled",
               startTime, entrants, maxPlayers, startedAt, finishedAt, url,
-              access?: "open" | "closed", pending?: number }        // pending = join requests waiting
+              access?: "open" | "closed", pending?: number,          // pending = join requests waiting
+              watchUrl?: string | null }
 GamePlayer = { discordId, username, avatarUrl,
                status: "pending" | "registered" | "playing" | "waiting" | "out" | "removed", place }
 ```
+
+`watchUrl` is optional: send it only while the event is running, pointing at the game's spectator page (games use `PUBLIC_URL/#/t/<id>/watch`). The hub then shows a "Watch live" link. Only `http(s)` links are kept, and leaving the field out clears it.
 
 To let the admin choose the lobby when creating an event, offer an `access` select field (`open` / `closed`) in `info`.
 

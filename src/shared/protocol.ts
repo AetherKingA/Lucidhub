@@ -60,6 +60,8 @@ export interface GameEvent {
   access?: LobbyAccess;
   /** Join requests waiting for an admin (closed lobbies). */
   pending?: number;
+  /** Live spectator link; games report it only while the event is running. */
+  watchUrl?: string | null;
 }
 
 /** "open": anyone can join. "closed": players ask, and an admin approves each one. */
@@ -187,6 +189,8 @@ export interface HubEvent {
   /** Null when the game doesn't support closed lobbies. */
   access: LobbyAccess | null;
   pending: number;
+  /** Live spectator link, set only while the game reports the event as running. */
+  watchUrl: string | null;
   announceChannelId: string | null;
   processedAt: number | null;
   rules: PrizeRule[];

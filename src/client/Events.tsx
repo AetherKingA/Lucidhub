@@ -70,6 +70,14 @@ export function EventsPage() {
                   <td>{e.rules.length ? <PrizeSummary e={e} /> : <span className="pill warnpill">None</span>}</td>
                   <td>
                     <EventStatus status={e.status} />
+                    {e.status === "running" && e.watchUrl && (
+                      <>
+                        {" "}
+                        <a className="small" href={e.watchUrl} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()}>
+                          Watch ↗
+                        </a>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -299,6 +307,11 @@ export function EventPage({ id }: { id: number }) {
           <button className="btn primary" disabled={busy} onClick={() => op("start", "Started")}>
             Start now
           </button>
+        )}
+        {data.status === "running" && data.watchUrl && (
+          <a className="btn primary" href={data.watchUrl} target="_blank" rel="noreferrer">
+            👁 Watch live
+          </a>
         )}
         {data.status === "running" && (
           <>
