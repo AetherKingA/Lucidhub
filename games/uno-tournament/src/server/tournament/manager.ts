@@ -10,7 +10,9 @@ import type { TournamentConfig } from "./types.ts";
 export interface Notifier {
   isConnected(userId: number): boolean;
   tableChanged(tournamentId: number, tableId: number): void;
-  tableClosed(tournamentId: number, tableId: number): void;
+  tableClosed(tournamentId: number, tableId: number, winnerId: number | null): void;
+  /** People watching a table who aren't seated at it. */
+  viewerCount(tournamentId: number, tableId: number): number;
   lobbyChanged(): void;
   playerMoved(tournamentId: number, userId: number, tableId: number): void;
   playerAdvanced(tournamentId: number, userId: number, round: number, totalRounds: number): void;
@@ -192,7 +194,8 @@ export class TournamentManager {
     return {
       isConnected: (userId) => n.isConnected(userId),
       tableChanged: (tableId) => n.tableChanged(tournamentId, tableId),
-      tableClosed: (tableId) => n.tableClosed(tournamentId, tableId),
+      tableClosed: (tableId, winnerId) => n.tableClosed(tournamentId, tableId, winnerId),
+      viewerCount: (tableId) => n.viewerCount(tournamentId, tableId),
       lobbyChanged: () => {
         n.lobbyChanged();
         // Keeps the hub's player counts and lobby panel live.

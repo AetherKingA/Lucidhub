@@ -24,7 +24,10 @@ export class TournamentError extends Error {}
 export interface TournamentHooks {
   isConnected(userId: number): boolean;
   tableChanged(tableId: number): void;
-  tableClosed(tableId: number): void;
+  /** winnerId: who won the table and moves on (null when nobody did, or the tournament ended). */
+  tableClosed(tableId: number, winnerId: number | null): void;
+  /** People watching a table who aren't seated at it. */
+  viewerCount(tableId: number): number;
   lobbyChanged(): void;
   playerMoved(userId: number, tableId: number): void;
   playerAdvanced(userId: number, round: number): void;
@@ -42,6 +45,7 @@ export const noopHooks: TournamentHooks = {
   isConnected: () => true,
   tableChanged: noop,
   tableClosed: noop,
+  viewerCount: () => 0,
   lobbyChanged: noop,
   playerMoved: noop,
   playerAdvanced: noop,
@@ -512,7 +516,7 @@ export class Tournament {
     // Everyone else is out: fewest wins first, then most leftover card points.
     const losers = left.filter((s) => s !== champ).sort((a, b) => a.wins - b.wins || b.points - a.points);
     this.knockOut(t, losers.map((s) => s.userId));
-    this.closeTable(t.id);
+    this.closeTable(t.id, champ?.userId ?? null);
     this.completeNode(this.node(t.id), champ?.userId ?? null, now);
   }
 
@@ -628,9 +632,9 @@ export class Tournament {
     return -1;
   }
 
-  private closeTable(id: number) {
+  private closeTable(id: number, winnerId: number | null = null) {
     this.tables.delete(id);
-    this.hooks.tableClosed(id);
+    this.hooks.tableClosed(id, winnerId);
     this.hooks.dirty({ tableId: id, deleted: true });
   }
 
@@ -706,8 +710,32 @@ export class Tournament {
     };
   }
 
+  /** Still in contention: asked to join, registered, seated, or waiting for a next table. */
+  isStillPlaying(userId: number): boolean {
+    const m = this.meta;
+    if (m.status !== "registering" && m.status !== "running") return false;
+    if (m.pending?.[userId]) return true;
+    const e = m.entrants[userId];
+    return Boolean(e && e.place === null);
+  }
+
+  /** Host view: admins who aren't playing in this tournament see every hand while it runs. */
+  canSeeAllCards(viewer: { id: number; isAdmin: boolean }): boolean {
+    return viewer.isAdmin && this.meta.status === "running" && !this.isStillPlaying(viewer.id);
+  }
+
   /** What one viewer may see of a table: their own cards only, everyone else's as counts. */
   tableView(tableId: number, viewerId: number | null, now: number): TableView | null {
+    return this.buildView(tableId, viewerId, now, false);
+  }
+
+  /** Every hand face up, for an admin who isn't playing. Null for anyone else. */
+  hostView(tableId: number, viewer: { id: number; isAdmin: boolean }, now: number): TableView | null {
+    if (!this.canSeeAllCards(viewer)) return null;
+    return this.buildView(tableId, null, now, true);
+  }
+
+  private buildView(tableId: number, viewerId: number | null, now: number, reveal: boolean): TableView | null {
     const t = this.tables.get(tableId);
     if (!t) return null;
     const m = this.meta;
@@ -742,6 +770,7 @@ export class Tournament {
         catchable: Boolean(g && !g.winner && g.unoVulnerable === pid),
         handPoints: done && t.lastResult ? (t.lastResult.points[pid] ?? null) : null,
         timeBankMs: s.timeBankMs,
+        ...(reveal && p ? { hand: [...p.hand].sort((a, b) => cardSortKey(a) - cardSortKey(b)) } : {}),
       };
     });
 
@@ -776,6 +805,7 @@ export class Tournament {
       handWinnerSeat: done ? (g!.players.find((p) => p.playerId === g!.winner)?.seat ?? null) : null,
       handComplete: done,
       paused: m.paused,
+      hostView: reveal,
       serverNow: now,
     };
   }
@@ -813,6 +843,7 @@ export class Tournament {
             handNo: t.handNo,
             leader: lead && lead.wins > 0 ? this.name(lead.userId) : null,
             leaderWins: lead?.wins ?? 0,
+            viewers: this.hooks.viewerCount(t.id),
           };
         }),
       standings: [...alive, ...out].slice(0, 300).map((e) => ({

@@ -45,6 +45,8 @@ export interface EventSummary {
   startedAt: number | null;
   finishedAt: number | null;
   url: string;
+  /** Where people can watch it live. Only while it's running. */
+  watchUrl: string | null;
 }
 
 export function hubSignature(secret: string, timestamp: string, rawBody: string) {
@@ -122,6 +124,7 @@ function toSummary(m: TournamentMeta): EventSummary {
     startedAt: m.startedAt,
     finishedAt: m.finishedAt,
     url: `${config.publicUrl}/#/t/${m.id}`,
+    watchUrl: m.status === "running" ? `${config.publicUrl}/#/t/${m.id}/watch` : null,
   };
 }
 
