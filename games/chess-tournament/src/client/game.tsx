@@ -1,5 +1,5 @@
 import { type ReactNode, createContext, useContext, useEffect, useRef, useState } from "react";
-import type { ChatMessage, ClientMessage, ServerMessage, TableView, TournamentSummary, UserInfo } from "../shared/protocol.ts";
+import type { ChatMessage, ClientMessage, FollowInfo, ServerMessage, TableView, TournamentSummary, UserInfo } from "../shared/protocol.ts";
 import { navigate, useRoute } from "./router.ts";
 import { type SocketStatus, useSocket } from "./useSocket.ts";
 
@@ -17,6 +17,12 @@ interface Game {
   tables: Record<string, TableView>;
   /** Recent chat per table, keyed like tables. */
   chats: Record<string, ChatMessage[]>;
+  /** The spectators' chat per board (never sent to the players there). */
+  spectatorChats: Record<string, ChatMessage[]>;
+  /** People watching each board, keyed like tables. */
+  viewers: Record<string, number>;
+  /** Who you're following, per tournament id. */
+  follows: Record<number, FollowInfo | null>;
   send: (msg: ClientMessage) => void;
   /** Current time on the server's clock (corrects for a wrong PC clock). */
   serverNow: () => number;
@@ -42,6 +48,9 @@ export function GameProvider({ user, children }: { user: UserInfo; children: Rea
   const [tournaments, setTournaments] = useState<TournamentSummary[]>([]);
   const [tables, setTables] = useState<Record<string, TableView>>({});
   const [chats, setChats] = useState<Record<string, ChatMessage[]>>({});
+  const [spectatorChats, setSpectatorChats] = useState<Record<string, ChatMessage[]>>({});
+  const [viewers, setViewers] = useState<Record<string, number>>({});
+  const [follows, setFollows] = useState<Record<number, FollowInfo | null>>({});
   const [notices, setNotices] = useState<Notice[]>([]);
   const offset = useRef(0);
   const route = useRoute();
@@ -111,7 +120,20 @@ export function GameProvider({ user, children }: { user: UserInfo; children: Rea
         break;
       case "chat": {
         const k = tableKey(msg.tournamentId, msg.tableId);
-        setChats((c) => ({ ...c, [k]: msg.replace ? msg.messages : [...(c[k] ?? []), ...msg.messages].slice(-120) }));
+        const set = msg.channel === "spectators" ? setSpectatorChats : setChats;
+        set((c) => ({ ...c, [k]: msg.replace ? msg.messages : [...(c[k] ?? []), ...msg.messages].slice(-120) }));
+        break;
+      }
+      case "viewers":
+        setViewers((v) => ({ ...v, [tableKey(msg.tournamentId, msg.tableId)]: msg.count }));
+        break;
+      case "follow": {
+        setFollows((f) => ({ ...f, [msg.tournamentId]: msg.following }));
+        if (msg.notice) notify(msg.notice, msg.following ? "info" : "success");
+        // Take a follower watching this tournament to the board their player just sat down at.
+        const r = routeRef.current;
+        const to = msg.following?.tableId;
+        if (to != null && r.page === "table" && r.tournamentId === msg.tournamentId && r.tableId !== to) navigate(`/t/${msg.tournamentId}/table/${to}`);
         break;
       }
     }
@@ -124,6 +146,9 @@ export function GameProvider({ user, children }: { user: UserInfo; children: Rea
     tournaments,
     tables,
     chats,
+    spectatorChats,
+    viewers,
+    follows,
     send,
     serverNow: () => Date.now() + offset.current,
     notices,

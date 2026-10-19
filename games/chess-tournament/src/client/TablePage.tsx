@@ -2,16 +2,31 @@ import { useEffect, useRef, useState } from "react";
 import type { ClientAction, Color, SeatView, TableView } from "../shared/protocol.ts";
 import { TableChat } from "./Chat.tsx";
 import { formatClock, ordinal, tableKey, useGame, useServerNow } from "./game.tsx";
+import { LiveTables, useTournamentDetail } from "./TournamentPage.tsx";
 
 export function TablePage({ tournamentId, tableId }: { tournamentId: number; tableId: number }) {
-  const { tables, chats, send, tournaments, status } = useGame();
-  const view = tables[tableKey(tournamentId, tableId)];
+  const { tables, chats, spectatorChats, viewers, follows, send, tournaments, status } = useGame();
+  const k = tableKey(tournamentId, tableId);
+  const view = tables[k];
   const summary = tournaments.find((t) => t.id === tournamentId);
   const [sound, setSound] = usePref("chess:sound", true);
+  // Spectators choose which side is at the bottom (players always play from the bottom).
+  const [flipped, setFlipped] = usePref("chess:flip", false);
   // On narrow screens the chat covers the board, so it starts closed there.
   const [chatOpen, setChatOpen] = usePref("chess:chat", typeof innerWidth === "number" && innerWidth >= 1300);
-  const messages = chats[tableKey(tournamentId, tableId)] ?? [];
-  const unread = useUnread(messages.length, chatOpen);
+  const messages = chats[k] ?? [];
+  const spectatorMessages = spectatorChats[k] ?? [];
+  const seated = view?.mySeat != null;
+  const unread = useUnread(messages.length + (seated ? 0 : spectatorMessages.length), chatOpen);
+  const watching = viewers[k] ?? 0;
+  const following = follows[tournamentId] ?? null;
+  const me = summary?.me;
+  const stillPlaying = Boolean(me && ((me.registered && me.place === null) || me.pending));
+  // Spectators who are out of (or never in) a running tournament can follow a player around.
+  const canFollow = Boolean(view && !seated && !stillPlaying && summary?.status === "running");
+  const follow = (userId: number | null) => send({ type: "follow", tournamentId, userId });
+  // The list of other boards, for when this match has finished.
+  const { detail } = useTournamentDetail(tournamentId, !view);
 
   // Subscribe while this page is open (own board is subscribed automatically anyway).
   useEffect(() => {
@@ -42,11 +57,29 @@ export function TablePage({ tournamentId, tableId }: { tournamentId: number; tab
               <span className="lc-pill muted">{summary?.remaining ?? 0} left</span>
             </span>
           )}
+          {watching > 0 && (
+            <span className="lc-pill muted" title="People watching this board">
+              👁 {watching} watching
+            </span>
+          )}
+          {following && (
+            <span className="lc-pill follow-chip">
+              Following <b>{following.username}</b>
+              <button className="link" onClick={() => follow(null)} title="Stop following">
+                ✕
+              </button>
+            </span>
+          )}
           <span className="head-tools">
             {myTable != null && myTable !== tableId && (
               <a className="btn primary small-btn" href={`#/t/${tournamentId}/table/${myTable}`}>
                 Back to my board
               </a>
+            )}
+            {view && !seated && (
+              <button className="icon-btn" onClick={() => setFlipped(!flipped)} title={flipped ? "Show White at the bottom" : "Show Black at the bottom"}>
+                ⇅
+              </button>
             )}
             <button className="icon-btn" onClick={() => setSound(!sound)} title={sound ? "Mute move sounds" : "Play move sounds"}>
               {sound ? "🔔" : "🔕"}
@@ -58,23 +91,46 @@ export function TablePage({ tournamentId, tableId }: { tournamentId: number; tab
         </div>
         {!view ? (
           <div className="center muted table-empty">
-            {summary?.me?.place === 1
-              ? "🏆 You won the tournament!"
-              : summary?.me?.waiting
-                ? `You're through to round ${summary.me.waiting.round}! Your next match starts when the other match in your half of the bracket finishes.`
-                : summary?.me?.place != null
-                  ? `Your tournament is over: you finished ${ordinal(summary.me.place)}. You can still watch the other boards.`
+            <p>
+              {summary?.me?.place === 1
+                ? "🏆 You won the tournament!"
+                : summary?.me?.waiting
+                  ? `You're through to round ${summary.me.waiting.round}! Your next match starts when the other match in your half of the bracket finishes.`
                   : summary?.status === "finished" || summary?.status === "cancelled"
-                  ? "This tournament is over."
-                  : "This match has finished (or is loading)."}
+                    ? "This tournament is over."
+                    : following?.tableId === null
+                      ? `Waiting for ${following.username}'s next match (round ${following.round})…`
+                      : summary?.me?.place != null
+                        ? `Your tournament is over: you finished ${ordinal(summary.me.place)}. You can still watch the other boards.`
+                        : "This match has finished (or is loading)."}
+            </p>
+            {following?.tableId != null && following.tableId !== tableId && (
+              <a className="btn primary" href={`#/t/${tournamentId}/table/${following.tableId}`}>
+                Go to {following.username}'s board
+              </a>
+            )}
+            {summary?.status === "running" && detail && detail.tables.length > 0 && (
+              <>
+                <p className="small">Watch another board:</p>
+                <LiveTables t={summary} tables={detail.tables} totalRounds={detail.rounds.length} except={tableId} />
+              </>
+            )}
           </div>
         ) : (
-          <Match view={view} sound={sound} />
+          <Match view={view} sound={sound} flipped={flipped} followingId={following?.userId ?? null} onFollow={canFollow ? follow : null} />
         )}
       </div>
       {chatOpen && (
         <aside className="chat-panel">
-          <TableChat tournamentId={tournamentId} tableId={tableId} messages={messages} canSend={Boolean(view)} onClose={() => setChatOpen(false)} />
+          <TableChat
+            tournamentId={tournamentId}
+            tableId={tableId}
+            messages={messages}
+            spectatorMessages={spectatorMessages}
+            seated={seated}
+            canSend={Boolean(view)}
+            onClose={() => setChatOpen(false)}
+          />
         </aside>
       )}
     </main>
@@ -156,24 +212,26 @@ function Piece({ p }: { p: string }) {
 
 // ------------------------------------------------------------------ the match
 
-function Match({ view, sound }: { view: TableView; sound: boolean }) {
+function Match(p: { view: TableView; sound: boolean; flipped: boolean; followingId: number | null; onFollow: ((userId: number | null) => void) | null }) {
+  const { view, sound } = p;
   const { send } = useGame();
   const act = (action: ClientAction) => send({ type: "action", tournamentId: view.tournamentId, action });
   const myTurn = view.legal.length > 0;
   useMoveSound(view.moves.length, myTurn, sound, view.gameNo);
 
-  // You play from the bottom; spectators see White at the bottom.
-  const bottomColor: Color = view.myColor ?? "w";
+  // You play from the bottom; spectators see White at the bottom unless they flip the board.
+  const bottomColor: Color = view.myColor ?? (p.flipped ? "b" : "w");
   const seats = view.seats.filter((s): s is SeatView => s !== null);
   const bottom = seats.find((s) => s.color === bottomColor) ?? (view.mySeat !== null ? view.seats[view.mySeat] : seats[0]) ?? null;
   const top = seats.find((s) => s !== bottom) ?? null;
+  const strip = (s: SeatView | null) => <PlayerStrip s={s} view={view} followed={s !== null && p.followingId === s.userId} onFollow={p.onFollow} />;
 
   return (
     <div className="match">
       <div className="board-col">
-        <PlayerStrip s={top} view={view} />
+        {strip(top)}
         <Board view={view} bottomColor={bottomColor} onMove={(uci) => act({ type: "move", uci })} />
-        <PlayerStrip s={bottom} view={view} />
+        {strip(bottom)}
       </div>
       <div className="side-col">
         <MatchScore view={view} />
@@ -194,7 +252,8 @@ function WinPips({ wins, of }: { wins: number; of: number }) {
   );
 }
 
-function PlayerStrip({ s, view }: { s: SeatView | null; view: TableView }) {
+function PlayerStrip(p: { s: SeatView | null; view: TableView; followed: boolean; onFollow: ((userId: number | null) => void) | null }) {
+  const { s, view, followed, onFollow } = p;
   if (!s) return <div className="player-strip muted">Waiting for an opponent…</div>;
   const isMe = view.mySeat === s.seat;
   return (
@@ -212,6 +271,15 @@ function PlayerStrip({ s, view }: { s: SeatView | null; view: TableView }) {
             <span>
               {s.draws} draw{s.draws === 1 ? "" : "s"}
             </span>
+          )}
+          {onFollow && (
+            <button
+              className={`follow-btn ${followed ? "on" : ""}`}
+              onClick={() => onFollow(followed ? null : s.userId)}
+              title={followed ? "Stop following" : `Follow ${s.username} to every board they play at`}
+            >
+              {followed ? "★ Following" : "☆ Follow"}
+            </button>
           )}
         </span>
       </span>

@@ -214,6 +214,17 @@ table.data tr.current td { background: #16301e; }
 .chat-text { font-size: 14px; overflow-wrap: anywhere; }
 .chat-badge { font-size: 10px; font-weight: 700; padding: 0 6px; border-radius: 99px; background: #ffffff1a; color: var(--muted); text-transform: uppercase; }
 .chat-badge.admin { background: var(--gold); color: #000; }
+.chat-tabs { display: flex; gap: 4px; }
+.chat-tabs button { position: relative; background: none; border: 1px solid transparent; color: var(--muted); font: inherit; font-weight: 600; padding: 4px 10px; border-radius: 99px; cursor: pointer; }
+.chat-tabs button.active { color: var(--text); background: #ffffff14; border-color: #ffffff1f; }
+
+/* Spectating */
+.follow-chip { display: inline-flex; align-items: center; gap: 6px; border-color: #f6c54455; }
+.follow-chip .link { color: var(--muted); padding: 0 2px; }
+.follow-btn { margin-left: 6px; background: #00000066; border: 1px solid #ffffff26; color: var(--muted); font: inherit; font-size: 11px; padding: 1px 8px; border-radius: 99px; cursor: pointer; }
+.follow-btn:hover { color: var(--text); border-color: #ffffff55; }
+.follow-btn.on { color: var(--gold); border-color: #f6c54488; }
+.table-empty .table-grid { margin-top: 8px; text-align: left; }
 .chat-msg.from-dealer { font-size: 13px; color: #f5d98a; background: #e3b34112; border: 1px solid #e3b34126; border-radius: 10px; padding: 6px 10px; align-items: center; }
 .dealer-chip { width: 20px; height: 20px; border-radius: 50%; background: #fff; color: #111; font-size: 11px; font-weight: 900; display: grid; place-items: center; flex: none; }
 .chat-quick { display: flex; gap: 6px; padding: 6px 12px; flex-wrap: wrap; border-top: 1px solid #ffffff0f; }

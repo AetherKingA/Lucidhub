@@ -24,7 +24,10 @@ export class TournamentError extends Error {}
 export interface TournamentHooks {
   isConnected(userId: number): boolean;
   tableChanged(tableId: number): void;
-  tableClosed(tableId: number): void;
+  /** winnerId: who won the match and moves on (null when nobody did, or the tournament ended). */
+  tableClosed(tableId: number, winnerId: number | null): void;
+  /** People watching a board who aren't playing there. */
+  viewerCount(tableId: number): number;
   lobbyChanged(): void;
   playerMoved(userId: number, tableId: number): void;
   playerAdvanced(userId: number, round: number, bye: boolean): void;
@@ -42,6 +45,7 @@ export const noopHooks: TournamentHooks = {
   isConnected: () => true,
   tableChanged: noop,
   tableClosed: noop,
+  viewerCount: () => 0,
   lobbyChanged: noop,
   playerMoved: noop,
   playerAdvanced: noop,
@@ -546,7 +550,7 @@ export class Tournament {
     if (left.length > 1 && !champ) return;
     if (champ && left.length > 1) this.hooks.tableNews(t.id, [`${this.name(champ.userId)} wins the match ${champ.wins}–${left.find((s) => s !== champ)!.wins}`]);
     this.knockOut(t, left.filter((s) => s !== champ).map((s) => s.userId));
-    this.closeTable(t.id);
+    this.closeTable(t.id, champ?.userId ?? null);
     this.completeNode(this.node(t.id), champ?.userId ?? null, now);
   }
 
@@ -641,9 +645,9 @@ export class Tournament {
     return { table, seat: table.seats[seatIdx]!, seatIdx };
   }
 
-  private closeTable(id: number) {
+  private closeTable(id: number, winnerId: number | null = null) {
     this.tables.delete(id);
-    this.hooks.tableClosed(id);
+    this.hooks.tableClosed(id, winnerId);
     this.hooks.dirty({ tableId: id, deleted: true });
   }
 
@@ -717,6 +721,15 @@ export class Tournament {
             ? { registered: true, pending: false, removed: false, tableId: e.tableId, place: e.place, round: e.round, waiting }
             : { registered: false, pending: Boolean(m.pending?.[viewerId]), removed: Boolean(m.kicked?.includes(viewerId)), tableId: null, place: null, round: 0, waiting: null },
     };
+  }
+
+  /** Still in contention: asked to join, registered, playing, or waiting for a next match. */
+  isStillPlaying(userId: number): boolean {
+    const m = this.meta;
+    if (m.status !== "registering" && m.status !== "running") return false;
+    if (m.pending?.[userId]) return true;
+    const e = m.entrants[userId];
+    return Boolean(e && e.place === null);
   }
 
   /** Everything about a board. Chess has no hidden information; only the legal moves are personal. */
@@ -811,6 +824,7 @@ export class Tournament {
             players: seated.map((s) => this.name(s.userId)),
             score: seated.map((s) => s.wins).join("–"),
             gameNo: t.gameNo,
+            viewers: this.hooks.viewerCount(t.id),
           };
         }),
       standings: [...alive, ...out].slice(0, 300).map((e) => ({
