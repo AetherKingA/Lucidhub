@@ -1,6 +1,7 @@
 // Prizes, their code pools, and reusable prize ladders (templates).
 
-import type { Prize, PrizeRule, PrizeType, Template } from "../shared/protocol.ts";
+import { defaultMessage, MAX_AMOUNT, PRIZE_KINDS, prizeName } from "../shared/prizeKinds.ts";
+import type { Prize, PrizeKind, PrizeRule, PrizeType, Template } from "../shared/protocol.ts";
 import { db, tx } from "./db.ts";
 
 export class PrizeInputError extends Error {}
@@ -9,6 +10,8 @@ type PrizeDbRow = {
   id: number;
   name: string;
   type: PrizeType;
+  kind: PrizeKind;
+  amount: number | null;
   message: string;
   image_url: string | null;
   low_stock_threshold: number;
@@ -27,6 +30,8 @@ const toPrize = (r: PrizeDbRow): Prize => ({
   id: r.id,
   name: r.name,
   type: r.type,
+  kind: r.kind,
+  amount: r.amount,
   message: r.message,
   imageUrl: r.image_url,
   lowStockThreshold: r.low_stock_threshold,
@@ -35,9 +40,11 @@ const toPrize = (r: PrizeDbRow): Prize => ({
   usedCodes: r.used,
 });
 
+/** Accounts first, then Lupees, then everything else; biggest first within each. */
 export function listPrizes(includeArchived = false): Prize[] {
   const where = includeArchived ? "" : "WHERE p.archived = 0";
-  return (db.prepare(`${PRIZE_SELECT} ${where} ORDER BY p.archived, p.name`).all() as PrizeDbRow[]).map(toPrize);
+  const order = `p.archived, CASE p.kind WHEN 'account' THEN 0 WHEN 'lupees' THEN 1 ELSE 2 END, p.amount DESC, p.name`;
+  return (db.prepare(`${PRIZE_SELECT} ${where} ORDER BY ${order}`).all() as PrizeDbRow[]).map(toPrize);
 }
 
 export function getPrize(id: number): Prize | null {
@@ -45,37 +52,43 @@ export function getPrize(id: number): Prize | null {
   return r ? toPrize(r) : null;
 }
 
-export const DEFAULT_MESSAGES: Record<PrizeType, string> = {
-  code_pool: "Congratulations {user}! You placed #{place} in **{event}** and won **{prize}**.\n\nYour code: ```{code}```",
-  message: "Congratulations {user}! You placed #{place} in **{event}** and won **{prize}**.",
-};
-
 export interface PrizeInput {
   name: string;
   type: PrizeType;
+  /** Defaults to "custom". Accounts and Lupees are always code pools and need an amount. */
+  kind?: PrizeKind;
+  amount?: number | null;
   message?: string;
   imageUrl?: string | null;
   lowStockThreshold?: number;
 }
 
 function cleanInput(input: PrizeInput, existing?: Prize) {
-  const name = String(input.name ?? existing?.name ?? "").trim().slice(0, 80);
-  if (!name) throw new PrizeInputError("Give the prize a name");
-  const type = existing?.type ?? input.type;
+  const kind = existing?.kind ?? input.kind ?? "custom";
+  if (!PRIZE_KINDS.includes(kind)) throw new PrizeInputError("Pick a prize kind");
+  const type = kind === "custom" ? (existing?.type ?? input.type) : "code_pool";
   if (type !== "code_pool" && type !== "message") throw new PrizeInputError("Pick a prize type");
-  const message = String(input.message ?? existing?.message ?? "").trim().slice(0, 1800) || DEFAULT_MESSAGES[type];
+  let amount: number | null = null;
+  if (kind !== "custom") {
+    amount = Number(input.amount ?? existing?.amount);
+    if (!Number.isInteger(amount) || amount < 1 || amount > MAX_AMOUNT)
+      throw new PrizeInputError(kind === "account" ? "Enter the account size in dollars, e.g. 50000" : "Enter how many Lupees, e.g. 1000");
+  }
+  const name = String(input.name ?? existing?.name ?? "").trim().slice(0, 80) || prizeName(kind, amount);
+  if (!name) throw new PrizeInputError("Give the prize a name");
+  const message = String(input.message ?? existing?.message ?? "").trim().slice(0, 1800) || defaultMessage(kind, type);
   if (type === "code_pool" && !message.includes("{code}")) throw new PrizeInputError("The message must include {code} so the winner gets their code");
   const imageUrl = (input.imageUrl ?? existing?.imageUrl ?? "")?.trim() || null;
   if (imageUrl && !/^https:\/\/\S+$/.test(imageUrl)) throw new PrizeInputError("Image must be an https:// link");
   const threshold = Math.max(0, Math.min(1000, Math.round(Number(input.lowStockThreshold ?? existing?.lowStockThreshold ?? 2)) || 0));
-  return { name, type, message, imageUrl, threshold };
+  return { name, type, kind, amount, message, imageUrl, threshold };
 }
 
 export function createPrize(input: PrizeInput): Prize {
   const p = cleanInput(input);
   const { id } = db
-    .prepare(`INSERT INTO prizes (name, type, message, image_url, low_stock_threshold, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`)
-    .get(p.name, p.type, p.message, p.imageUrl, p.threshold, Date.now()) as { id: number };
+    .prepare(`INSERT INTO prizes (name, type, kind, amount, message, image_url, low_stock_threshold, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`)
+    .get(p.name, p.type, p.kind, p.amount, p.message, p.imageUrl, p.threshold, Date.now()) as { id: number };
   return getPrize(id)!;
 }
 
@@ -83,8 +96,9 @@ export function updatePrize(id: number, input: Partial<PrizeInput> & { archived?
   const existing = getPrize(id);
   if (!existing) throw new PrizeInputError("Prize not found");
   const p = cleanInput({ ...existing, ...input } as PrizeInput, existing);
-  db.prepare(`UPDATE prizes SET name = ?, message = ?, image_url = ?, low_stock_threshold = ?, archived = ? WHERE id = ?`).run(
+  db.prepare(`UPDATE prizes SET name = ?, amount = ?, message = ?, image_url = ?, low_stock_threshold = ?, archived = ? WHERE id = ?`).run(
     p.name,
+    p.amount,
     p.message,
     p.imageUrl,
     p.threshold,

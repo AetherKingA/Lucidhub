@@ -199,10 +199,16 @@ export interface HubEvent {
 
 export type PrizeType = "code_pool" | "message";
 
+/** What a prize is. "account" (a Lucid account code) and "lupees" (a Lupees code) are always code pools. */
+export type PrizeKind = "account" | "lupees" | "custom";
+
 export interface Prize {
   id: number;
   name: string;
   type: PrizeType;
+  kind: PrizeKind;
+  /** Account size in dollars, or how many Lupees. Null for custom prizes. */
+  amount: number | null;
   message: string;
   imageUrl: string | null;
   lowStockThreshold: number;
