@@ -6,13 +6,12 @@ import { navigate } from "./router.ts";
 
 type Tab = "tables" | "standings" | "rules" | "admin";
 
-export function TournamentPage({ id }: { id: number }) {
-  const { tournaments, user, send } = useGame();
+/** The tournament's details (boards, standings…), refreshed every few seconds while `enabled`. */
+export function useTournamentDetail(id: number, enabled = true) {
+  const { tournaments } = useGame();
   const live = tournaments.find((t) => t.id === id);
   const [detail, setDetail] = useState<TournamentDetail | null>(null);
   const [missing, setMissing] = useState(false);
-  const [tab, setTab] = useState<Tab>("tables");
-  const now = useServerNow(1000);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/tournaments/${id}`);
@@ -22,15 +21,31 @@ export function TournamentPage({ id }: { id: number }) {
 
   // Standings and boards change constantly while running; refresh every few seconds.
   useEffect(() => {
+    if (!enabled) return;
     load();
     const timer = setInterval(load, 5000);
     return () => clearInterval(timer);
-  }, [load]);
+  }, [load, enabled]);
 
   // Also refresh straight away when the live summary shows a knockout, a finished match or a new round.
   useEffect(() => {
-    if (live) load();
+    if (live && enabled) load();
   }, [live?.status, live?.remaining, live?.activeTables, live?.round]);
+
+  return { detail, missing, load };
+}
+
+export function TournamentPage({ id, watch = false }: { id: number; watch?: boolean }) {
+  const { tournaments, user, send } = useGame();
+  const live = tournaments.find((t) => t.id === id);
+  const { detail, missing, load } = useTournamentDetail(id);
+  const [tab, setTab] = useState<Tab>("tables");
+  const now = useServerNow(1000);
+
+  // "Watch live" links land on the boards.
+  useEffect(() => {
+    if (watch) setTab("tables");
+  }, [watch]);
 
   if (missing)
     return (
@@ -78,9 +93,18 @@ export function TournamentPage({ id }: { id: number }) {
               </button>
             )}
           </>
+        ) : me?.removed ? (
+          <span className="muted">An admin removed you from this tournament</span>
+        ) : me?.pending ? (
+          <>
+            <span className="muted">⏳ Asked to join · waiting for an admin to let you in</span>
+            <button className="btn ghost" onClick={() => send({ type: "unregister", tournamentId: t.id })}>
+              Cancel request
+            </button>
+          </>
         ) : t.registrationOpen ? (
           <button className="btn primary" onClick={() => send({ type: "register", tournamentId: t.id })}>
-            Register
+            {t.access === "closed" ? "Ask to join" : "Register"}
           </button>
         ) : null}
       </div>
@@ -93,7 +117,7 @@ export function TournamentPage({ id }: { id: number }) {
         ))}
       </nav>
 
-      {detail && tab === "tables" && <TablesTab t={t} detail={detail} />}
+      {detail && tab === "tables" && <TablesTab t={t} detail={detail} watch={watch} />}
       {detail && tab === "standings" && <StandingsTab detail={detail} />}
       {tab === "rules" && <RulesTab t={t} />}
       {tab === "admin" && user.isAdmin && <AdminTab t={t} onChange={load} />}
@@ -159,7 +183,7 @@ function roundName(round: number, total: number) {
   return `Round ${round}`;
 }
 
-function TablesTab({ t, detail }: { t: TournamentSummary; detail: TournamentDetail }) {
+function TablesTab({ t, detail, watch }: { t: TournamentSummary; detail: TournamentDetail; watch: boolean }) {
   if (t.status === "registering")
     return (
       <p className="muted">
@@ -179,21 +203,33 @@ function TablesTab({ t, detail }: { t: TournamentSummary; detail: TournamentDeta
           </div>
         ))}
       </div>
+      {watch && detail.tables.length > 0 && <h3 className="section">👁 Pick a board to watch</h3>}
       {!detail.tables.length && <p className="muted">No boards in play.</p>}
-      <div className="table-grid">
-        {detail.tables.map((tb) => (
+      <LiveTables t={t} tables={detail.tables} totalRounds={detail.rounds.length} />
+    </>
+  );
+}
+
+/** Tiles linking to every board in play, with how many people are watching each. */
+export function LiveTables(p: { t: TournamentSummary; tables: TournamentDetail["tables"]; totalRounds: number; except?: number }) {
+  const { t } = p;
+  return (
+    <div className="table-grid">
+      {p.tables
+        .filter((tb) => tb.id !== p.except)
+        .map((tb) => (
           <a key={tb.id} className={`card table-tile ${t.me?.tableId === tb.id ? "mine" : ""}`} href={`#/t/${t.id}/table/${tb.id}`}>
             <b>
-              Board {tb.id} <span className="muted small">· {roundName(tb.round, detail.rounds.length)}</span>
+              Board {tb.id} <span className="muted small">· {roundName(tb.round, p.totalRounds)}</span>
             </b>
             <span>{tb.players.join(" vs ")}</span>
             <span className="muted small">
               Game {Math.max(1, tb.gameNo)} · score {tb.score}
+              {tb.viewers > 0 && ` · 👁 ${tb.viewers}`}
             </span>
           </a>
         ))}
-      </div>
-    </>
+    </div>
   );
 }
 

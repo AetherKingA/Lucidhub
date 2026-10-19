@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { ChatError, MAX_CHAT_LENGTH, TableChats, cleanChatText } from "../src/server/chat.ts";
+import { ChatError, MAX_CHAT_LENGTH, TableChats, chatRights, cleanChatText, defaultChannel, messageKind } from "../src/server/chat.ts";
 import { defaultConfig } from "../src/server/tournament/structure.ts";
 import { Tournament, noopHooks } from "../src/server/tournament/tournament.ts";
 import { describeHand } from "../src/shared/handName.ts";
 
-const who = (userId: number, seated = true) => ({ userId, username: `p${userId}`, avatarUrl: "", isAdmin: false, seated });
+const who = (userId: number, seated = true, isAdmin = false) => ({ userId, username: `p${userId}`, avatarUrl: "", isAdmin, seated });
 
 describe("table chat", () => {
   it("cleans messages: trims, collapses spaces, drops control and direction-flipping characters, caps length", () => {
@@ -15,29 +15,62 @@ describe("table chat", () => {
   });
 
   it("refuses empty messages", () => {
-    expect(() => new TableChats().say("1:1", who(1), "   ", 0)).toThrow(ChatError);
+    expect(() => new TableChats().say("1:1", "table", who(1), "   ", 0)).toThrow(ChatError);
   });
 
   it("rate-limits each person but allows a short burst", () => {
     const c = new TableChats();
-    for (let i = 0; i < 3; i++) c.say("1:1", who(1), `m${i}`, 0);
-    expect(() => c.say("1:1", who(1), "too fast", 10)).toThrow(/too fast/);
+    for (let i = 0; i < 3; i++) c.say("1:1", "table", who(1), `m${i}`, 0);
+    expect(() => c.say("1:1", "table", who(1), "too fast", 10)).toThrow(/too fast/);
     // Someone else isn't affected, and the first person can talk again after a moment.
-    expect(c.say("1:1", who(2), "hi", 10).text).toBe("hi");
-    expect(c.say("1:1", who(1), "ok now", 1300).text).toBe("ok now");
+    expect(c.say("1:1", "table", who(2), "hi", 10).text).toBe("hi");
+    expect(c.say("1:1", "table", who(1), "ok now", 1300).text).toBe("ok now");
   });
 
-  it("keeps a separate, capped history per table and labels spectators", () => {
+  it("keeps a separate, capped history per table and channel, and labels spectators", () => {
     const c = new TableChats();
-    c.say("1:1", who(1), "at table one", 0);
-    c.say("1:2", who(2, false), "watching table two", 0);
-    expect(c.history("1:1").map((m) => m.text)).toEqual(["at table one"]);
-    expect(c.history("1:2")[0]).toMatchObject({ kind: "spectator", username: "p2" });
+    c.say("1:1", "table", who(1), "at table one", 0);
+    c.say("1:2", "spectators", who(2, false), "watching table two", 0);
+    expect(c.history("1:1", "table").map((m) => m.text)).toEqual(["at table one"]);
+    expect(c.history("1:1", "spectators")).toEqual([]);
+    expect(c.history("1:2", "table")).toEqual([]);
+    expect(c.history("1:2", "spectators")[0]).toMatchObject({ kind: "spectator", username: "p2" });
     for (let i = 0; i < 200; i++) c.dealer("1:1", `hand ${i}`, i);
-    expect(c.history("1:1").length).toBeLessThanOrEqual(80);
-    expect(c.history("1:1").at(-1)!.text).toBe("hand 199");
+    expect(c.history("1:1", "table").length).toBeLessThanOrEqual(80);
+    expect(c.history("1:1", "table").at(-1)!.text).toBe("hand 199");
+    expect(c.history("1:1", "spectators")).toEqual([]);
+    c.say("1:1", "spectators", who(3, false), "hi", 0);
     c.drop("1:1");
-    expect(c.history("1:1")).toEqual([]);
+    expect(c.history("1:1", "table")).toEqual([]);
+    expect(c.history("1:1", "spectators")).toEqual([]);
+  });
+});
+
+describe("who can read and post where", () => {
+  it("keeps seated players out of the spectator chat", () => {
+    expect(chatRights({ seated: true, isAdmin: false })).toEqual({ read: ["table"], post: ["table"] });
+    // Even an admin who is playing at this table.
+    expect(chatRights({ seated: true, isAdmin: true })).toEqual({ read: ["table"], post: ["table"] });
+  });
+
+  it("lets spectators read both but post only with other spectators; the host may talk to the table", () => {
+    expect(chatRights({ seated: false, isAdmin: false })).toEqual({ read: ["table", "spectators"], post: ["spectators"] });
+    expect(chatRights({ seated: false, isAdmin: true })).toEqual({ read: ["table", "spectators"], post: ["table", "spectators"] });
+  });
+
+  it("labels messages by channel and who sent them", () => {
+    expect(messageKind("table", { seated: true, isAdmin: false })).toBe("player");
+    expect(messageKind("table", { seated: false, isAdmin: true })).toBe("host");
+    expect(messageKind("spectators", { seated: false, isAdmin: true })).toBe("spectator");
+    expect(defaultChannel({ seated: true, isAdmin: false })).toBe("table");
+    expect(defaultChannel({ seated: false, isAdmin: true })).toBe("spectators");
+  });
+
+  it("refuses posts in a channel you can't use", () => {
+    const c = new TableChats();
+    expect(() => c.say("1:1", "spectators", who(1, true), "psst", 0)).toThrow(/Players can't post/);
+    expect(() => c.say("1:1", "table", who(2, false), "fold!", 0)).toThrow(/Only players and the host/);
+    expect(c.say("1:1", "table", who(3, false, true), "Break in 5 minutes", 0)).toMatchObject({ kind: "host", admin: true });
   });
 });
 

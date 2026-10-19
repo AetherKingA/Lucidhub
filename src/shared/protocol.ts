@@ -56,7 +56,63 @@ export interface GameEvent {
   startedAt: number | null;
   finishedAt: number | null;
   url: string | null;
+  /** Optional: games that support closed lobbies report these. */
+  access?: LobbyAccess;
+  /** Join requests waiting for an admin (closed lobbies). */
+  pending?: number;
+  /** Live spectator link; games report it only while the event is running. */
+  watchUrl?: string | null;
 }
+
+/** "open": anyone can join. "closed": players ask, and an admin approves each one. */
+export type LobbyAccess = "open" | "closed";
+
+/** "removed": kicked by an admin. "afk": the game removed them for staying away too long (see INTEGRATION.md). */
+export type PlayerStatus = "pending" | "registered" | "playing" | "waiting" | "out" | "removed" | "afk";
+
+export interface GamePlayer {
+  discordId: string;
+  username: string;
+  avatarUrl: string;
+  status: PlayerStatus;
+  place: number | null;
+  /** Optional details for the admin. When they registered or asked to join. */
+  joinedAt?: number;
+  /** Has the game site open right now. */
+  online?: boolean;
+  record?: PlayerRecord;
+}
+
+/** What a game site knows about a player's account. */
+export interface PlayerRecord {
+  firstVisit: number | null;
+  lastVisit: number | null;
+  /** Latest first. `location` is filled in by the hub. */
+  ips: { ip: string; firstSeen: number; lastSeen: number; location?: IpLocation | null }[];
+  /** Other accounts that have used one of these IPs. */
+  sharedIpWith: { discordId: string; username: string }[];
+}
+
+/** Rough location of an IP, from the hub's offline database. `local`: this PC, a home network or Tailscale. */
+export interface IpLocation {
+  city: string | null;
+  region: string | null;
+  country: string | null;
+  countryCode: string | null;
+  /** Who runs the network (internet provider, hosting company, VPN). */
+  network: string | null;
+  local?: boolean;
+}
+
+/** GET /api/integration/events/:id/players, and the answer to every lobby change. */
+export interface GameLobby {
+  access: LobbyAccess;
+  players: GamePlayer[];
+  /** Added by the hub: whether IP locations could be looked up (the database is installed). */
+  locations?: boolean;
+}
+
+export type PlayerAction = "approve" | "deny" | "kick";
 
 /** GET /api/integration/events/:id/results */
 export interface GameResults {
@@ -131,6 +187,11 @@ export interface HubEvent {
   entrants: number;
   maxPlayers: number | null;
   url: string | null;
+  /** Null when the game doesn't support closed lobbies. */
+  access: LobbyAccess | null;
+  pending: number;
+  /** Live spectator link, set only while the game reports the event as running. */
+  watchUrl: string | null;
   announceChannelId: string | null;
   processedAt: number | null;
   rules: PrizeRule[];
@@ -139,10 +200,16 @@ export interface HubEvent {
 
 export type PrizeType = "code_pool" | "message";
 
+/** What a prize is. "account" (a Lucid account code) and "lupees" (a Lupees code) are always code pools. */
+export type PrizeKind = "account" | "lupees" | "custom";
+
 export interface Prize {
   id: number;
   name: string;
   type: PrizeType;
+  kind: PrizeKind;
+  /** Account size in dollars, or how many Lupees. Null for custom prizes. */
+  amount: number | null;
   message: string;
   imageUrl: string | null;
   lowStockThreshold: number;

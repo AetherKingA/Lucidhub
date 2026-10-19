@@ -1,16 +1,38 @@
 import { useEffect, useState } from "react";
 
-// Hash routes: #/  ·  #/t/12  ·  #/t/12/table/3
+// Hash routes: #/  ·  #/t/12  ·  #/t/12/watch (pick a table to watch)  ·  #/t/12/table/3
 export type Route =
   | { page: "lobby"; tournamentId: null; tableId: null }
-  | { page: "tournament"; tournamentId: number; tableId: null }
+  | { page: "tournament"; tournamentId: number; tableId: null; watch: boolean }
   | { page: "table"; tournamentId: number; tableId: number };
 
 export function parseRoute(hash: string): Route {
-  const m = hash.replace(/^#/, "").match(/^\/t\/(\d+)(?:\/table\/(\d+))?/);
+  const m = hash.replace(/^#/, "").match(/^\/t\/(\d+)(?:\/table\/(\d+)|\/(watch))?/);
   if (!m) return { page: "lobby", tournamentId: null, tableId: null };
   if (m[2]) return { page: "table", tournamentId: Number(m[1]), tableId: Number(m[2]) };
-  return { page: "tournament", tournamentId: Number(m[1]), tableId: null };
+  return { page: "tournament", tournamentId: Number(m[1]), tableId: null, watch: Boolean(m[3]) };
+}
+
+const RETURN_KEY = "returnTo";
+
+/** Remembers the page someone was trying to open (e.g. a "Watch live" link) while they sign in. */
+export function rememberPage() {
+  try {
+    if (location.hash.length > 2) sessionStorage.setItem(RETURN_KEY, location.hash);
+  } catch {
+    /* private mode */
+  }
+}
+
+/** After signing in, goes back to that page (sign-in always lands on the lobby). */
+export function restorePage() {
+  try {
+    const hash = sessionStorage.getItem(RETURN_KEY);
+    sessionStorage.removeItem(RETURN_KEY);
+    if (hash && /^#\/t\/\d+/.test(hash) && location.hash.length <= 2) location.hash = hash;
+  } catch {
+    /* private mode */
+  }
 }
 
 export function navigate(path: string) {

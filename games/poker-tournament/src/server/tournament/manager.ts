@@ -1,6 +1,6 @@
 import type { TournamentDetail, TournamentSummary } from "../../shared/protocol.ts";
 import { usersSharingIp } from "../db.ts";
-import { notifyHubEventFinished } from "../integration.ts";
+import { notifyHubEventChanged, notifyHubEventFinished } from "../integration.ts";
 import { insertTournament, loadTournaments, saveBatch, saveResult } from "./store.ts";
 import { PLAYER_CAPS, TABLE_SIZE, cleanLevels, defaultConfig, defaultLevels } from "./structure.ts";
 import { Tournament, type TournamentHooks } from "./tournament.ts";
@@ -10,19 +10,25 @@ import type { TournamentConfig } from "./types.ts";
 export interface Notifier {
   isConnected(userId: number): boolean;
   tableChanged(tournamentId: number, tableId: number): void;
-  tableClosed(tournamentId: number, tableId: number): void;
+  tableClosed(tournamentId: number, tableId: number, winnerId: number | null): void;
+  /** People watching a table who aren't seated at it. */
+  viewerCount(tournamentId: number, tableId: number): number;
   lobbyChanged(): void;
   playerMoved(tournamentId: number, userId: number, tableId: number): void;
   playerAdvanced(tournamentId: number, userId: number, round: number, totalRounds: number): void;
   playerFinished(tournamentId: number, userId: number, place: number, points: number): void;
   /** A hand ended at a table; lines describe who won, for the table chat. */
   handComplete(tournamentId: number, tableId: number, lines: string[]): void;
+  /** A dealer line for the table chat that isn't a hand result, e.g. someone removed for being AFK. */
+  tableNotice(tournamentId: number, tableId: number, line: string): void;
 }
 
 /** Admin-facing options for creating a tournament. Everything else uses the defaults. */
 export interface CreateOptions {
   name: string;
   startTime: number;
+  /** "closed": players ask to join and an admin approves each one. */
+  access?: string;
   startingStack?: number;
   /** "fair" (Fair Play, default) or "bully" (Full-on Bullying: table winners keep all their chips). */
   chipMode?: string;
@@ -35,6 +41,10 @@ export interface CreateOptions {
   decisionSeconds?: number;
   timeBankSeconds?: number;
   payoutPercent?: number;
+  /** "on" (default) or "off": show the rest of the board after a hand, and folders how they'd have done. */
+  rabbitHunt?: string;
+  /** Minutes a player may stay away before they're removed. 0 = never. */
+  afkKickMinutes?: number;
 }
 
 const clamp = (v: unknown, min: number, max: number, fallback: number) => {
@@ -83,6 +93,11 @@ export class TournamentManager {
     return this.tournaments.get(id);
   }
 
+  /** Has the site open right now. */
+  isOnline(userId: number) {
+    return this.notifier.isConnected(userId);
+  }
+
   create(opts: CreateOptions, now: number): Tournament {
     const base = defaultConfig();
     const config: TournamentConfig = {
@@ -100,9 +115,12 @@ export class TournamentManager {
       decisionSeconds: clamp(opts.decisionSeconds, 5, 120, base.decisionSeconds),
       timeBankSeconds: clamp(opts.timeBankSeconds, 0, 600, base.timeBankSeconds),
       payoutPercent: clamp(opts.payoutPercent, 1, 50, base.payoutPercent),
+      rabbitHunt: opts.rabbitHunt !== "off",
+      afkKickMinutes: clamp(opts.afkKickMinutes, 0, 60, base.afkKickMinutes!),
     };
     const id = insertTournament(config, now);
     const t = Tournament.create(id, config, now, this.hooksFor(id));
+    if (opts.access === "closed") t.meta.access = "closed";
     this.tournaments.set(id, t);
     this.dirtyMeta.add(id);
     this.scheduleFlush();
@@ -193,8 +211,13 @@ export class TournamentManager {
     return {
       isConnected: (userId) => n.isConnected(userId),
       tableChanged: (tableId) => n.tableChanged(tournamentId, tableId),
-      tableClosed: (tableId) => n.tableClosed(tournamentId, tableId),
-      lobbyChanged: () => n.lobbyChanged(),
+      tableClosed: (tableId, winnerId) => n.tableClosed(tournamentId, tableId, winnerId),
+      viewerCount: (tableId) => n.viewerCount(tournamentId, tableId),
+      lobbyChanged: () => {
+        n.lobbyChanged();
+        // Keeps the hub's player counts and lobby panel live.
+        notifyHubEventChanged(tournamentId);
+      },
       playerMoved: (userId, tableId) => n.playerMoved(tournamentId, userId, tableId),
       playerAdvanced: (userId, round) => n.playerAdvanced(tournamentId, userId, round, this.tournaments.get(tournamentId)?.meta.totalRounds ?? round),
       playerFinished: (userId, place, points) => {
@@ -202,6 +225,7 @@ export class TournamentManager {
         n.playerFinished(tournamentId, userId, place, points);
       },
       handComplete: (tableId, lines) => n.handComplete(tournamentId, tableId, lines),
+      tableNotice: (tableId, line) => n.tableNotice(tournamentId, tableId, line),
       tournamentFinished: () => {
         // Save first so the hub finds the final status and results when it calls back.
         this.flush();

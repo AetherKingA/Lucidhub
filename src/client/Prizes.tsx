@@ -1,12 +1,22 @@
 import { useState } from "react";
-import type { Prize, PrizeType } from "../shared/protocol.ts";
+import { defaultMessage, isDefaultMessage, prizeName, prizeTypeLabel } from "../shared/prizeKinds.ts";
+import type { Prize, PrizeKind, PrizeType } from "../shared/protocol.ts";
 import { api, placeLabel } from "./api.ts";
 import { Empty, PageHeader, useAction, useHub } from "./ui.tsx";
 
-const DEFAULT_MESSAGE: Record<PrizeType, string> = {
-  code_pool: "Congratulations {user}! You placed #{place} in **{event}** and won **{prize}**.\n\nYour code: ```{code}```",
-  message: "Congratulations {user}! You placed #{place} in **{event}** and won **{prize}**.",
-};
+/** The four choices on the "New prize" form. Accounts and Lupees are code pools with an amount. */
+type Choice = "account" | "lupees" | "code_pool" | "message";
+
+const CHOICES: { id: Choice; label: string; hint: string }[] = [
+  { id: "account", label: "Lucid account", hint: "account codes, e.g. 50K" },
+  { id: "lupees", label: "Lupees", hint: "Lupees codes" },
+  { id: "code_pool", label: "Other codes", hint: "gift cards, keys…" },
+  { id: "message", label: "Message", hint: "a link, instructions…" },
+];
+
+const kindOf = (c: Choice): PrizeKind => (c === "account" || c === "lupees" ? c : "custom");
+const typeOf = (c: Choice): PrizeType => (c === "message" ? "message" : "code_pool");
+const choiceOf = (p: Prize): Choice => (p.kind === "custom" ? p.type : p.kind);
 
 export function PrizesPage() {
   const { prizes, templates, reload } = useHub();
@@ -18,7 +28,7 @@ export function PrizesPage() {
 
   return (
     <>
-      <PageHeader title="Prizes" sub="A code pool hands each winner the next unused code. A message prize sends the same text to every winner.">
+      <PageHeader title="Prizes" sub="Lucid accounts, Lupees and other code prizes hand each winner the next unused code from their pool. A message prize sends the same text to every winner.">
         <button className="btn primary" onClick={() => setEditing("new")}>
           + New prize
         </button>
@@ -29,7 +39,7 @@ export function PrizesPage() {
 
       <section className="card">
         {shown.length === 0 ? (
-          <Empty>No prizes yet. Create one — e.g. "Steam key" as a code pool, then paste in your keys.</Empty>
+          <Empty>No prizes yet. Create one — e.g. a "50K Account", then paste in its account codes.</Empty>
         ) : (
           <table className="table">
             <thead>
@@ -47,7 +57,7 @@ export function PrizesPage() {
                     <strong>{p.name}</strong>
                     {p.archived && <span className="muted small"> (archived)</span>}
                   </td>
-                  <td className="muted">{p.type === "code_pool" ? "Code pool" : "Message"}</td>
+                  <td className="muted">{prizeTypeLabel(p)}</td>
                   <td>
                     {p.type === "code_pool" ? (
                       <span className={p.stock === 0 ? "bad" : p.stock <= p.lowStockThreshold ? "warn" : "ok"}>
@@ -107,29 +117,46 @@ export function PrizesPage() {
 }
 
 function PrizeForm({ prize, onDone }: { prize: Prize | null; onDone: () => void }) {
-  const [type, setType] = useState<PrizeType>(prize?.type ?? "code_pool");
+  const [choice, setChoice] = useState<Choice>(prize ? choiceOf(prize) : "account");
+  const [amount, setAmount] = useState(prize?.amount ? String(prize.amount) : "");
   const [name, setName] = useState(prize?.name ?? "");
-  const [message, setMessage] = useState(prize?.message ?? DEFAULT_MESSAGE.code_pool);
+  const [message, setMessage] = useState(prize?.message ?? defaultMessage("account", "code_pool"));
   const [imageUrl, setImageUrl] = useState(prize?.imageUrl ?? "");
   const [threshold, setThreshold] = useState(prize?.lowStockThreshold ?? 2);
   const [codes, setCodes] = useState("");
   const { busy, run } = useAction();
+  const kind = kindOf(choice);
+  const type = typeOf(choice);
+  const amountNum = Math.round(Number(amount)) || null;
+  const autoName = prizeName(kind, amountNum);
+  const shownName = name.trim() || autoName || "Prize";
 
-  const pickType = (t: PrizeType) => {
-    if (message === DEFAULT_MESSAGE[type]) setMessage(DEFAULT_MESSAGE[t]);
-    setType(t);
+  // The name follows the account size or Lupees amount until you type your own.
+  const followName = (nextKind: PrizeKind, nextAmount: number | null) => {
+    if (!name.trim() || name === autoName) setName(prizeName(nextKind, nextAmount));
+  };
+
+  const pickChoice = (c: Choice) => {
+    if (isDefaultMessage(message)) setMessage(defaultMessage(kindOf(c), typeOf(c)));
+    followName(kindOf(c), amountNum);
+    setChoice(c);
+  };
+
+  const changeAmount = (v: string) => {
+    followName(kind, Math.round(Number(v)) || null);
+    setAmount(v);
   };
 
   const preview = message
     .replace(/\{user\}/g, "@Winner")
     .replace(/\{place\}/g, "1")
     .replace(/\{event\}/g, "Friday Poker Night")
-    .replace(/\{prize\}/g, name || "Prize")
+    .replace(/\{prize\}/g, shownName)
     .replace(/\{code\}/g, "ABCD-1234-EFGH");
 
   const save = () =>
     run(async () => {
-      const body = { name, type, message, imageUrl: imageUrl || null, lowStockThreshold: threshold };
+      const body = { name, type, kind, amount: kind === "custom" ? null : amountNum, message, imageUrl: imageUrl || null, lowStockThreshold: threshold };
       if (prize) await api(`/api/prizes/${prize.id}`, { method: "PATCH", body });
       else await api("/api/prizes", { body: { ...body, codes } });
       onDone();
@@ -140,18 +167,28 @@ function PrizeForm({ prize, onDone }: { prize: Prize | null; onDone: () => void 
       <h3>{prize ? `Edit ${prize.name}` : "New prize"}</h3>
       {!prize && (
         <div className="seg">
-          <button className={type === "code_pool" ? "active" : ""} onClick={() => pickType("code_pool")}>
-            Code pool <small>game keys, gift cards…</small>
-          </button>
-          <button className={type === "message" ? "active" : ""} onClick={() => pickType("message")}>
-            Message <small>a link, instructions…</small>
-          </button>
+          {CHOICES.map((c) => (
+            <button key={c.id} className={choice === c.id ? "active" : ""} onClick={() => pickChoice(c.id)}>
+              {c.label} <small>{c.hint}</small>
+            </button>
+          ))}
         </div>
       )}
       <div className="form-grid">
-        <label className="wide">
+        {kind !== "custom" && (
+          <label>
+            <span>{kind === "account" ? "Account size ($)" : "Number of Lupees"}</span>
+            <input type="number" min={1} step={1} value={amount} onChange={(e) => changeAmount(e.target.value)} placeholder={kind === "account" ? "50000" : "1000"} />
+          </label>
+        )}
+        <label className={kind === "custom" ? "wide" : ""}>
           <span>Name (shown in the public announcement)</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. $25 Steam gift card" maxLength={80} />
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={kind === "account" ? "e.g. 50K Account" : kind === "lupees" ? "e.g. 1,000 Lupees" : "e.g. $25 Steam gift card"}
+            maxLength={80}
+          />
         </label>
         <label className="wide">
           <span>
@@ -172,7 +209,7 @@ function PrizeForm({ prize, onDone }: { prize: Prize | null; onDone: () => void 
         )}
         {type === "code_pool" && !prize && (
           <label className="wide">
-            <span>Codes — one per line, or paste a CSV (first column is used)</span>
+            <span>{kind === "account" ? "Account codes" : kind === "lupees" ? "Lupees codes" : "Codes"} — one per line, or paste a CSV (first column is used)</span>
             <textarea rows={5} className="mono" value={codes} onChange={(e) => setCodes(e.target.value)} placeholder={"AAAA-BBBB-CCCC\nDDDD-EEEE-FFFF"} />
           </label>
         )}
@@ -180,7 +217,7 @@ function PrizeForm({ prize, onDone }: { prize: Prize | null; onDone: () => void 
       <div className="dm-preview">
         <div className="muted small">Preview of the DM</div>
         <div className="embed">
-          <strong>🏆 You won: {name || "Prize"}</strong>
+          <strong>🏆 You won: {shownName}</strong>
           <p>{preview}</p>
         </div>
       </div>

@@ -1,7 +1,12 @@
-// Table chat: the last messages at each table, kept in memory (a restart clears it). Players at the
-// board and people watching it can talk; the arbiter posts each game's result.
+// Board chat: the last messages at each board, kept in memory (a restart clears it). Each board has
+// two channels: "table", where the players talk and the arbiter posts each game's result, and
+// "spectators", where people watching talk among themselves. Players at a board never get its
+// spectator chat, so nobody watching can feed them moves.
 
-import type { ChatMessage } from "../shared/protocol.ts";
+import { chatRights, messageKind } from "../shared/chatRights.ts";
+import type { ChatChannel, ChatMessage } from "../shared/protocol.ts";
+
+export { type ChatPerson, chatRights, defaultChannel, messageKind } from "../shared/chatRights.ts";
 
 export const MAX_CHAT_LENGTH = 200;
 const HISTORY = 80;
@@ -25,16 +30,25 @@ export class TableChats {
   private allowance = new Map<number, { tokens: number; at: number }>();
   private nextId = 1;
 
-  history(tableKey: string): ChatMessage[] {
-    return this.byTable.get(tableKey) ?? [];
+  history(tableKey: string, channel: ChatChannel): ChatMessage[] {
+    return this.byTable.get(`${tableKey}|${channel}`) ?? [];
   }
 
   drop(tableKey: string) {
-    this.byTable.delete(tableKey);
+    this.byTable.delete(`${tableKey}|table`);
+    this.byTable.delete(`${tableKey}|spectators`);
   }
 
-  /** Adds a message from a person, enforcing the rate limit. Returns the stored message. */
-  say(tableKey: string, from: { userId: number; username: string; avatarUrl: string; isAdmin: boolean; seated: boolean }, raw: unknown, now: number) {
+  /** Adds a message from a person, enforcing who may post where and the rate limit. Returns the stored message. */
+  say(
+    tableKey: string,
+    channel: ChatChannel,
+    from: { userId: number; username: string; avatarUrl: string; isAdmin: boolean; seated: boolean },
+    raw: unknown,
+    now: number,
+  ) {
+    if (!chatRights(from).post.includes(channel))
+      throw new ChatError(from.seated ? "Players can't post in the spectator chat" : "Only players and the host talk in the board chat");
     const text = cleanChatText(raw);
     if (!text) throw new ChatError("Type a message first");
     const a = this.allowance.get(from.userId) ?? { tokens: BURST, at: now };
@@ -43,8 +57,8 @@ export class TableChats {
     if (a.tokens < 1) throw new ChatError("You're sending messages too fast");
     a.tokens -= 1;
     this.allowance.set(from.userId, a);
-    return this.push(tableKey, {
-      kind: from.seated ? "player" : "spectator",
+    return this.push(tableKey, channel, {
+      kind: messageKind(channel, from),
       userId: from.userId,
       username: from.username,
       avatarUrl: from.avatarUrl,
@@ -54,17 +68,18 @@ export class TableChats {
     });
   }
 
-  /** A message from the arbiter (game results, draw offers…). */
+  /** A message from the arbiter (game results, draw offers…), always in the players' chat. */
   dealer(tableKey: string, text: string, now: number) {
-    return this.push(tableKey, { kind: "dealer", userId: null, username: "Arbiter", avatarUrl: null, admin: false, text, at: now });
+    return this.push(tableKey, "table", { kind: "dealer", userId: null, username: "Arbiter", avatarUrl: null, admin: false, text, at: now });
   }
 
-  private push(tableKey: string, m: Omit<ChatMessage, "id">): ChatMessage {
+  private push(tableKey: string, channel: ChatChannel, m: Omit<ChatMessage, "id">): ChatMessage {
+    const k = `${tableKey}|${channel}`;
     const msg: ChatMessage = { id: this.nextId++, ...m };
-    const list = this.byTable.get(tableKey) ?? [];
+    const list = this.byTable.get(k) ?? [];
     list.push(msg);
     if (list.length > HISTORY) list.splice(0, list.length - HISTORY);
-    this.byTable.set(tableKey, list);
+    this.byTable.set(k, list);
     return msg;
   }
 }

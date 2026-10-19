@@ -1,22 +1,36 @@
 import { type CSSProperties, useEffect, useRef, useState } from "react";
-import type { Action, SeatView, TableView } from "../shared/protocol.ts";
+import type { Action, RabbitOutcome, SeatView, TableView } from "../shared/protocol.ts";
+import { type RaiseRange, amountAt, positionOf, sliderPositions, snapRaise } from "../shared/betSizing.ts";
 import type { Equity } from "../shared/equity.ts";
 import { describeHand } from "../shared/handName.ts";
 import { PlayingCard } from "./Cards.tsx";
 import { TableChat } from "./Chat.tsx";
 import { chips, formatClock, tableKey, useGame, useServerNow } from "./game.tsx";
 import { play } from "./sounds.ts";
+import { LiveTables, useTournamentDetail } from "./TournamentPage.tsx";
 import { useEquity } from "./useEquity.ts";
 
 export function TablePage({ tournamentId, tableId }: { tournamentId: number; tableId: number }) {
-  const { tables, chats, send, tournaments, status } = useGame();
-  const view = tables[tableKey(tournamentId, tableId)];
+  const { tables, chats, spectatorChats, viewers, follows, send, tournaments, status, user } = useGame();
+  const k = tableKey(tournamentId, tableId);
+  const view = tables[k];
   const summary = tournaments.find((t) => t.id === tournamentId);
   const [sound, setSound] = usePref("poker:sound", true);
   // On narrow screens the chat covers the table, so it starts closed there.
   const [chatOpen, setChatOpen] = usePref("poker:chat", typeof innerWidth === "number" && innerWidth >= 1100);
-  const messages = chats[tableKey(tournamentId, tableId)] ?? [];
-  const unread = useUnread(messages.length, chatOpen);
+  const messages = chats[k] ?? [];
+  const spectatorMessages = spectatorChats[k] ?? [];
+  const seated = view?.mySeat != null;
+  const unread = useUnread(messages.length + (seated ? 0 : spectatorMessages.length), chatOpen);
+  const watching = viewers[k] ?? 0;
+  const following = follows[tournamentId] ?? null;
+  const me = summary?.me;
+  const stillPlaying = Boolean(me && ((me.registered && me.place === null) || me.pending));
+  // Spectators who are out of (or never in) a running tournament can follow a player around.
+  const canFollow = Boolean(view && !seated && !stillPlaying && summary?.status === "running");
+  const follow = (userId: number | null) => send({ type: "follow", tournamentId, userId });
+  // The list of other tables, for when this one has finished.
+  const { detail } = useTournamentDetail(tournamentId, !view);
 
   // Subscribe while this page is open (own table is subscribed automatically anyway).
   useEffect(() => {
@@ -42,6 +56,19 @@ export function TablePage({ tournamentId, tableId }: { tournamentId: number; tab
           </a>
           <span className="table-name">Table {tableId}</span>
           {view && <LevelClock view={view} remaining={summary?.remaining ?? 0} />}
+          {watching > 0 && (
+            <span className="lc-pill muted" title="People watching this table">
+              👁 {watching} watching
+            </span>
+          )}
+          {following && (
+            <span className="lc-pill follow-chip">
+              Following <b>{following.username}</b>
+              <button className="link" onClick={() => follow(null)} title="Stop following">
+                ✕
+              </button>
+            </span>
+          )}
           <span className="head-tools">
             {myTable != null && myTable !== tableId && (
               <a className="btn primary small-btn" href={`#/t/${tournamentId}/table/${myTable}`}>
@@ -59,23 +86,48 @@ export function TablePage({ tournamentId, tableId }: { tournamentId: number; tab
             </button>
           </span>
         </div>
+        {view?.hostView && <div className="host-banner">👁 Host view: you can see every hand. Don't share what you see with players.</div>}
+        {view && !seated && user.isAdmin && stillPlaying && <div className="host-banner muted">Host view is off while you're playing in this tournament.</div>}
         {!view ? (
           <div className="center muted table-empty">
-            {summary?.me?.place === 1
-              ? "🏆 You won the tournament!"
-              : summary?.me?.waiting
-                ? `You won this table! You'll move to your round ${summary.me.waiting.round} table when the rest of your group finishes (${summary.me.waiting.groupDone}/${summary.me.waiting.groupSize} tables done).`
-                : summary?.status === "finished" || summary?.status === "cancelled"
-                  ? "This tournament is over."
-                  : "This table has finished (or is loading)."}
+            <p>
+              {summary?.me?.place === 1
+                ? "🏆 You won the tournament!"
+                : summary?.me?.waiting
+                  ? `You won this table! You'll move to your round ${summary.me.waiting.round} table when the rest of your group finishes (${summary.me.waiting.groupDone}/${summary.me.waiting.groupSize} tables done).`
+                  : summary?.status === "finished" || summary?.status === "cancelled"
+                    ? "This tournament is over."
+                    : following?.tableId === null
+                      ? `Waiting for ${following.username}'s next table (round ${following.round})…`
+                      : "This table has finished (or is loading)."}
+            </p>
+            {following?.tableId != null && following.tableId !== tableId && (
+              <a className="btn primary" href={`#/t/${tournamentId}/table/${following.tableId}`}>
+                Go to {following.username}'s table
+              </a>
+            )}
+            {summary?.status === "running" && detail && detail.tables.length > 0 && (
+              <>
+                <p className="small">Watch another table:</p>
+                <LiveTables t={summary} tables={detail.tables} except={tableId} />
+              </>
+            )}
           </div>
         ) : (
-          <Table view={view} sound={sound} />
+          <Table view={view} sound={sound} followingId={following?.userId ?? null} onFollow={canFollow ? follow : null} />
         )}
       </div>
       {chatOpen && (
         <aside className="chat-panel">
-          <TableChat tournamentId={tournamentId} tableId={tableId} messages={messages} canSend={Boolean(view)} onClose={() => setChatOpen(false)} />
+          <TableChat
+            tournamentId={tournamentId}
+            tableId={tableId}
+            messages={messages}
+            spectatorMessages={spectatorMessages}
+            seated={seated}
+            canSend={Boolean(view)}
+            onClose={() => setChatOpen(false)}
+          />
         </aside>
       )}
     </main>
@@ -165,6 +217,8 @@ function useTableSounds(view: TableView, enabled: boolean) {
       // Board cards, one after another (a flop is three flips).
       const added = view.board.length - p.board.length;
       for (let i = 0; i < added; i++) play("flip", 1, (hadBets ? 0.25 : 0) + i * 0.14);
+      // Rabbit hunt cards, softer than real ones.
+      for (let i = 0; i < view.rabbit.length - p.rabbit.length; i++) play("flip", 0.5, 0.3 + i * 0.14);
       // Every player's action. A new action changes the label or the amount in front of them.
       view.seats.forEach((s, i) => {
         const was = p.seats[i];
@@ -206,7 +260,8 @@ function useTableSounds(view: TableView, enabled: boolean) {
   }, [myTurn, enabled, view.handNo, view.street, view.currentBet, view.actionDeadline, view.paused]);
 }
 
-function Table({ view, sound }: { view: TableView; sound: boolean }) {
+function Table(p: { view: TableView; sound: boolean; followingId: number | null; onFollow: ((userId: number | null) => void) | null }) {
+  const { view, sound } = p;
   const { send } = useGame();
   const n = view.tableSize;
   // Rotate so the viewer sits at the bottom.
@@ -214,7 +269,8 @@ function Table({ view, sound }: { view: TableView; sound: boolean }) {
   const me = view.mySeat !== null ? view.seats[view.mySeat] : null;
   useTableSounds(view, sound);
   const totalPot = view.pot + view.seats.reduce((t, s) => t + (s?.bet ?? 0), 0);
-  const myHand = me && !me.folded ? describeHand(me.holeCards, view.board) : null;
+  // After folding you still see your hand, on the rabbit hunt board once the hand is over.
+  const myHand = me ? describeHand(me.holeCards, me.folded ? [...view.board, ...view.rabbit] : view.board) : null;
   // Win chance while the hand is live: against everyone still in, holding random cards.
   const live = Boolean(me && me.inHand && !me.folded && view.street && !view.handComplete);
   const opponents = view.seats.filter((s) => s && s.userId !== me?.userId && s.inHand && !s.folded).length;
@@ -227,10 +283,20 @@ function Table({ view, sound }: { view: TableView; sound: boolean }) {
           <div className="felt">
             <div className="felt-center">
               <div className="board">
-                {Array.from({ length: 5 }, (_, i) =>
-                  view.board[i] ? <PlayingCard key={`${view.handNo}-${view.board[i]}`} card={view.board[i]!} size="board" /> : <span key={i} className="card-slot" />,
-                )}
+                {Array.from({ length: 5 }, (_, i) => {
+                  const real = view.board[i];
+                  const rabbit = view.rabbit[i - view.board.length];
+                  if (real) return <PlayingCard key={`${view.handNo}-${real}`} card={real} size="board" />;
+                  if (rabbit)
+                    return (
+                      <span key={`${view.handNo}-r-${rabbit}`} className="rabbit-card" title="Rabbit hunt: this card would have come">
+                        <PlayingCard card={rabbit} size="board" />
+                      </span>
+                    );
+                  return <span key={i} className="card-slot" />;
+                })}
               </div>
+              {view.rabbit.length > 0 && <div className="rabbit-label">🐇 Rabbit hunt</div>}
               {totalPot > 0 && (
                 <div className="pot">
                   <ChipStack amount={totalPot} />
@@ -258,6 +324,8 @@ function Table({ view, sound }: { view: TableView; sound: boolean }) {
                         handLabel={seatIdx === view.mySeat ? myHand : null}
                         equity={seatIdx === view.mySeat ? equity : null}
                         opponents={opponents}
+                        followed={p.followingId === s.userId}
+                        onFollow={p.onFollow}
                       />
                     ) : (
                       <div className="seat empty-seat">Open seat</div>
@@ -279,7 +347,10 @@ function Table({ view, sound }: { view: TableView; sound: boolean }) {
 
       {me?.away && (
         <div className="away-bar">
-          You're sitting out — you're folded automatically each hand and blinds are still posted.
+          <span>
+            You're sitting out — you're folded automatically each hand and blinds are still posted.
+            {me.afkKickAt !== null && <AfkCountdown at={me.afkKickAt} paused={view.paused} sound={sound} />}
+          </span>
           <button
             className="btn primary"
             onClick={() => {
@@ -296,6 +367,20 @@ function Table({ view, sound }: { view: TableView; sound: boolean }) {
   );
 }
 
+/** In the sit-out bar: how long until you're removed for being away, with a warning sound at one minute. */
+function AfkCountdown({ at, paused, sound }: { at: number; paused: boolean; sound: boolean }) {
+  const left = at - useServerNow(500);
+  const warn = !paused && left > 0 && left <= 60_000;
+  useEffect(() => {
+    if (warn && sound) play("warn");
+  }, [warn]);
+  return (
+    <b className={`afk-left ${warn ? "soon" : ""}`}>
+      {paused ? "Your AFK countdown is paused." : `You'll be removed in ${formatClock(left)} unless you come back.`}
+    </b>
+  );
+}
+
 /** A little stack of chips whose height grows with the amount. */
 function ChipStack({ amount }: { amount: number }) {
   const count = Math.max(1, Math.min(6, Math.ceil(Math.log10(Math.max(10, amount)) - 0.5)));
@@ -309,8 +394,17 @@ function ChipStack({ amount }: { amount: number }) {
   );
 }
 
-function Seat(p: { s: SeatView; view: TableView; isMe: boolean; handLabel: string | null; equity: Equity | null; opponents: number }) {
-  const { s, view, isMe, handLabel, equity } = p;
+function Seat(p: {
+  s: SeatView;
+  view: TableView;
+  isMe: boolean;
+  handLabel: string | null;
+  equity: Equity | null;
+  opponents: number;
+  followed: boolean;
+  onFollow: ((userId: number | null) => void) | null;
+}) {
+  const { s, view, isMe, handLabel, equity, followed, onFollow } = p;
   const acting = view.toActSeat === s.seat && !view.handComplete;
   const winner = view.handComplete && s.won > 0;
   return (
@@ -343,16 +437,45 @@ function Seat(p: { s: SeatView; view: TableView; isMe: boolean; handLabel: strin
       ) : s.lastAction ? (
         <div className={`tag act-${s.lastAction.split(" ")[0]!.toLowerCase().replace("-", "")}`}>{s.lastAction}</div>
       ) : null}
-      {isMe && !winner && (handLabel || equity) && <MyRead label={handLabel} equity={equity} opponents={p.opponents} />}
+      {isMe && !winner && (handLabel || equity) && (
+        <MyRead label={handLabel} equity={equity} opponents={p.opponents} rabbit={view.myRabbit} />
+      )}
+      {onFollow && (
+        <button
+          className={`follow-btn ${followed ? "on" : ""}`}
+          onClick={() => onFollow(followed ? null : s.userId)}
+          title={followed ? "Stop following" : `Follow ${s.username} to every table they play at`}
+        >
+          {followed ? "★ Following" : "☆ Follow"}
+        </button>
+      )}
     </div>
   );
 }
 
+const RABBIT_VERDICT: Record<RabbitOutcome | "none", string> = {
+  win: "You would have won",
+  tie: "You would have split the pot",
+  lose: "You would have lost",
+  none: "No showdown, so no verdict",
+};
+
 /**
  * Under your seat: what you hold ("Pocket Kings") and your chance to win, as a number and a bar.
  * The chance is against the opponents still in, holding random cards (their real cards are unknown).
+ * After you fold and the hand ends: how you'd have done against the hands that were shown.
  */
-function MyRead({ label, equity, opponents }: { label: string | null; equity: Equity | null; opponents: number }) {
+function MyRead({
+  label,
+  equity,
+  opponents,
+  rabbit,
+}: {
+  label: string | null;
+  equity: Equity | null;
+  opponents: number;
+  rabbit: TableView["myRabbit"];
+}) {
   const win = equity ? Math.round(equity.win * 100) : null;
   const tie = equity ? Math.round(equity.tie * 100) : 0;
   const level = win === null ? "" : win >= 50 ? "good" : win >= 25 ? "ok" : "low";
@@ -377,6 +500,14 @@ function MyRead({ label, equity, opponents }: { label: string | null; equity: Eq
         <div className="wc-bar">
           <span className="wc-win" style={{ width: `${equity.win * 100}%` }} />
           <span className="wc-tie" style={{ width: `${equity.tie * 100}%` }} />
+        </div>
+      )}
+      {rabbit && (
+        <div
+          className={`mr-rabbit ${rabbit.outcome ?? "none"}`}
+          title={rabbit.outcome ? "Compared with the hands shown at showdown, on the full board." : "The winner didn't have to show their cards."}
+        >
+          {RABBIT_VERDICT[rabbit.outcome ?? "none"]}
         </div>
       )}
     </div>
@@ -478,8 +609,8 @@ function ActionBar({ view, me }: { view: TableView; me: SeatView }) {
   const toCall = Math.max(0, view.currentBet - me.bet);
   const step = Math.max(1, Math.floor(view.level.bigBlind / 2));
   // Round to the slider's step (from the minimum), but always allow exactly the minimum and all-in.
-  const clamp = (v: number) =>
-    Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo, legal.minRaiseTo + Math.round((v - legal.minRaiseTo) / step) * step));
+  const range: RaiseRange = { min: legal.minRaiseTo, max: legal.maxRaiseTo, step };
+  const clamp = (v: number) => snapRaise(v, range);
   const [raiseTo, setRaiseTo] = useState(legal.minRaiseTo);
 
   // Reset the raise amount each new decision.
@@ -523,9 +654,7 @@ function ActionBar({ view, me }: { view: TableView; me: SeatView }) {
       {canSize && (
         <BetSlider
           value={raiseTo}
-          min={legal.minRaiseTo}
-          max={legal.maxRaiseTo}
-          step={step}
+          range={range}
           presets={presets}
           onChange={(v) => setRaiseTo(clamp(v))}
           label={isBet ? "Bet" : "Raise to"}
@@ -551,15 +680,14 @@ function ActionBar({ view, me }: { view: TableView; me: SeatView }) {
 /** Chip-style slider with pot-size presets and fine +/- steps. */
 function BetSlider(p: {
   value: number;
-  min: number;
-  max: number;
-  step: number;
+  range: RaiseRange;
   presets: [string, number][];
   onChange: (v: number) => void;
   label: string;
 }) {
+  const { min, max, step } = p.range;
   const [typed, setTyped] = useState<string | null>(null);
-  const pct = ((p.value - p.min) / Math.max(1, p.max - p.min)) * 100;
+  const pct = ((p.value - min) / Math.max(1, max - min)) * 100;
   return (
     <div className="bet-slider">
       <div className="presets">
@@ -570,26 +698,28 @@ function BetSlider(p: {
         ))}
       </div>
       <div className="slider-row">
-        <button className="step" onClick={() => p.onChange(p.value - p.step)} aria-label="Less">
+        <button className="step" onClick={() => p.onChange(p.value - step)} aria-label="Less">
           −
         </button>
         <div className="range-wrap" style={{ "--pct": `${pct}%` } as CSSProperties}>
+          {/* The range works in step positions so its far right is exactly all-in, even off the step grid. */}
           <input
             className="bet-range"
             type="range"
-            min={p.min}
-            max={p.max}
-            step={p.step}
-            value={p.value}
-            onChange={(e) => p.onChange(Number(e.target.value))}
+            min={0}
+            max={sliderPositions(p.range)}
+            step={1}
+            value={positionOf(p.value, p.range)}
+            onChange={(e) => p.onChange(amountAt(Number(e.target.value), p.range))}
             aria-label={`${p.label} amount`}
+            aria-valuetext={chips(p.value)}
           />
           <div className="range-labels">
-            <span>{chips(p.min)}</span>
-            <span>{chips(p.max)}</span>
+            <span>{chips(min)}</span>
+            <span>{chips(max)}</span>
           </div>
         </div>
-        <button className="step" onClick={() => p.onChange(p.value + p.step)} aria-label="More">
+        <button className="step" onClick={() => p.onChange(p.value + step)} aria-label="More">
           +
         </button>
         <label className="amount-box">

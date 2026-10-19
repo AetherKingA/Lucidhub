@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { UserInfo } from "../shared/protocol.ts";
 import { GameProvider, useGame } from "./game.tsx";
 import { Lobby } from "./Lobby.tsx";
-import { navigate, useRoute } from "./router.ts";
+import { navigate, rememberPage, restorePage, useRoute } from "./router.ts";
 import { TablePage } from "./TablePage.tsx";
 import { TournamentPage } from "./TournamentPage.tsx";
 
@@ -28,7 +28,11 @@ export function App() {
 
   useEffect(() => {
     fetch("/api/me")
-      .then(async (r) => (r.ok ? setMe({ status: "signedIn", user: await r.json() }) : setMe({ status: "signedOut" })))
+      .then(async (r) => {
+        if (!r.ok) return setMe({ status: "signedOut" });
+        restorePage();
+        setMe({ status: "signedIn", user: await r.json() });
+      })
       .catch(() => setMe({ status: "signedOut" }));
   }, []);
 
@@ -53,7 +57,7 @@ function Login({ error }: { error: string | null }) {
         <h1>{SITE_NAME}</h1>
         <p className="muted">Uno tournaments with your Discord friends. Win your table, move on, take the final.</p>
         {error && <p className="error">{error}</p>}
-        <a className="btn discord" href="/auth/discord">
+        <a className="btn discord" href="/auth/discord" onClick={rememberPage}>
           <DiscordIcon /> Sign in with Discord
         </a>
         <p className="fine">One account per Discord account. Your Discord email must be verified.</p>
@@ -91,7 +95,7 @@ function Shell({ onLogout }: { onLogout: () => void }) {
       </header>
 
       {route.page === "lobby" && <Lobby />}
-      {route.page === "tournament" && <TournamentPage id={route.tournamentId} />}
+      {route.page === "tournament" && <TournamentPage id={route.tournamentId} watch={route.watch} />}
       {route.page === "table" && <TablePage tournamentId={route.tournamentId} tableId={route.tableId} />}
 
       <div className="notices" role="status">

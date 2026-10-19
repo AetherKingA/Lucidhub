@@ -1,6 +1,6 @@
 import type { TournamentDetail, TournamentSummary } from "../../shared/protocol.ts";
 import { usersSharingIp } from "../db.ts";
-import { notifyHubEventFinished } from "../integration.ts";
+import { notifyHubEventChanged, notifyHubEventFinished } from "../integration.ts";
 import { insertTournament, loadTournaments, saveBatch, saveResult } from "./store.ts";
 import { MAX_PLAYERS, TABLE_SIZES, WINS_TO_ADVANCE, defaultConfig } from "./structure.ts";
 import { Tournament, type TournamentHooks } from "./tournament.ts";
@@ -10,7 +10,9 @@ import type { TournamentConfig } from "./types.ts";
 export interface Notifier {
   isConnected(userId: number): boolean;
   tableChanged(tournamentId: number, tableId: number): void;
-  tableClosed(tournamentId: number, tableId: number): void;
+  tableClosed(tournamentId: number, tableId: number, winnerId: number | null): void;
+  /** People watching a table who aren't seated at it. */
+  viewerCount(tournamentId: number, tableId: number): number;
   lobbyChanged(): void;
   playerMoved(tournamentId: number, userId: number, tableId: number): void;
   playerAdvanced(tournamentId: number, userId: number, round: number, totalRounds: number): void;
@@ -23,6 +25,8 @@ export interface Notifier {
 export interface CreateOptions {
   name: string;
   startTime: number;
+  /** "closed": players ask to join and an admin approves each one. */
+  access?: string;
   maxPlayers?: number;
   tableSize?: number;
   winsToAdvance?: number;
@@ -80,6 +84,11 @@ export class TournamentManager {
     return this.tournaments.get(id);
   }
 
+  /** Has the site open right now. */
+  isOnline(userId: number) {
+    return this.notifier.isConnected(userId);
+  }
+
   create(opts: CreateOptions, now: number): Tournament {
     const base = defaultConfig();
     const config: TournamentConfig = {
@@ -94,6 +103,7 @@ export class TournamentManager {
     };
     const id = insertTournament(now);
     const t = Tournament.create(id, config, now, this.hooksFor(id));
+    if (opts.access === "closed") t.meta.access = "closed";
     this.tournaments.set(id, t);
     this.dirtyMeta.add(id);
     this.scheduleFlush();
@@ -184,8 +194,13 @@ export class TournamentManager {
     return {
       isConnected: (userId) => n.isConnected(userId),
       tableChanged: (tableId) => n.tableChanged(tournamentId, tableId),
-      tableClosed: (tableId) => n.tableClosed(tournamentId, tableId),
-      lobbyChanged: () => n.lobbyChanged(),
+      tableClosed: (tableId, winnerId) => n.tableClosed(tournamentId, tableId, winnerId),
+      viewerCount: (tableId) => n.viewerCount(tournamentId, tableId),
+      lobbyChanged: () => {
+        n.lobbyChanged();
+        // Keeps the hub's player counts and lobby panel live.
+        notifyHubEventChanged(tournamentId);
+      },
       playerMoved: (userId, tableId) => n.playerMoved(tournamentId, userId, tableId),
       playerAdvanced: (userId, round) => n.playerAdvanced(tournamentId, userId, round, this.tournaments.get(tournamentId)?.meta.totalRounds ?? round),
       playerFinished: (userId, place) => {

@@ -17,14 +17,17 @@
 import { type Color, IllegalMoveError, applyMove, canMate, inCheck, legalUci, newGame, parseUci } from "../../shared/engine/chess.ts";
 import type { ClientAction, SeatView, TableView, TournamentDetail, TournamentSummary } from "../../shared/protocol.ts";
 import { DRAWS_BEFORE_ARMAGEDDON, FIRST_MOVE_MS, bracketShape, spreadOrder } from "./structure.ts";
-import type { BracketNode, GameEndReason, MatchGame, SeatPlayer, TableState, TournamentConfig, TournamentMeta } from "./types.ts";
+import type { BracketNode, GameEndReason, MatchGame, SeatPlayer, TableState, TournamentConfig, TournamentMeta, LobbyAccess } from "./types.ts";
 
 export class TournamentError extends Error {}
 
 export interface TournamentHooks {
   isConnected(userId: number): boolean;
   tableChanged(tableId: number): void;
-  tableClosed(tableId: number): void;
+  /** winnerId: who won the match and moves on (null when nobody did, or the tournament ended). */
+  tableClosed(tableId: number, winnerId: number | null): void;
+  /** People watching a board who aren't playing there. */
+  viewerCount(tableId: number): number;
   lobbyChanged(): void;
   playerMoved(userId: number, tableId: number): void;
   playerAdvanced(userId: number, round: number, bye: boolean): void;
@@ -42,6 +45,7 @@ export const noopHooks: TournamentHooks = {
   isConnected: () => true,
   tableChanged: noop,
   tableClosed: noop,
+  viewerCount: () => 0,
   lobbyChanged: noop,
   playerMoved: noop,
   playerAdvanced: noop,
@@ -126,6 +130,21 @@ export class Tournament {
     const m = this.meta;
     if (m.status !== "registering") throw new TournamentError("Registration is closed");
     if (m.entrants[user.id]) throw new TournamentError("You are already registered");
+    if (m.kicked?.includes(user.id)) throw new TournamentError("An admin removed you from this tournament");
+    if (this.access === "closed") {
+      if (m.pending?.[user.id]) throw new TournamentError("You already asked to join. An admin will let you in.");
+      if (this.entrantCount >= m.config.maxPlayers) throw new TournamentError("The tournament is full");
+      (m.pending ??= {})[user.id] = { userId: user.id, username: user.username, avatarUrl: user.avatarUrl, requestedAt: now };
+      this.hooks.dirty("meta");
+      this.hooks.lobbyChanged();
+      return;
+    }
+    this.admit(user, now);
+  }
+
+  /** Adds a player to the field: an open registration, or an admin approving their request. */
+  private admit(user: NewEntrant, now: number) {
+    const m = this.meta;
     if (this.entrantCount >= m.config.maxPlayers) throw new TournamentError("The tournament is full");
     m.entrants[user.id] = {
       userId: user.id,
@@ -142,9 +161,75 @@ export class Tournament {
   }
 
   unregister(userId: number) {
+    // Withdrawing a join request.
+    if (this.meta.pending?.[userId]) {
+      delete this.meta.pending[userId];
+      this.hooks.dirty("meta");
+      this.hooks.lobbyChanged();
+      return;
+    }
     if (this.meta.status !== "registering") throw new TournamentError("You can't unregister once the tournament has started");
     if (!this.meta.entrants[userId]) throw new TournamentError("You are not registered");
     delete this.meta.entrants[userId];
+    this.hooks.dirty("meta");
+    this.hooks.lobbyChanged();
+  }
+
+  get access(): LobbyAccess {
+    return this.meta.access ?? "open";
+  }
+
+  /** Opening the lobby lets in everyone who was waiting, while there's room. */
+  setAccess(access: LobbyAccess, now: number) {
+    const m = this.meta;
+    if (m.status === "finished" || m.status === "cancelled") throw new TournamentError("The tournament is already over");
+    m.access = access;
+    if (access === "open" && m.status === "registering") {
+      for (const p of Object.values(m.pending ?? {}).sort((a, b) => a.requestedAt - b.requestedAt)) {
+        if (this.entrantCount >= m.config.maxPlayers) break;
+        this.admit({ id: p.userId, username: p.username, avatarUrl: p.avatarUrl }, now);
+        delete m.pending![p.userId];
+      }
+    }
+    this.hooks.dirty("meta");
+    this.hooks.lobbyChanged();
+  }
+
+  /** Lets someone who asked to join into the tournament (admin). */
+  approve(userId: number, now: number) {
+    const m = this.meta;
+    const p = m.pending?.[userId];
+    if (!p) throw new TournamentError("That player hasn't asked to join");
+    if (m.status !== "registering") throw new TournamentError("Registration is closed");
+    this.admit({ id: p.userId, username: p.username, avatarUrl: p.avatarUrl }, now);
+    delete m.pending![userId];
+    this.hooks.dirty("meta");
+  }
+
+  /** Turns down a join request (admin). They can ask again. */
+  deny(userId: number) {
+    if (!this.meta.pending?.[userId]) throw new TournamentError("That player hasn't asked to join");
+    delete this.meta.pending[userId];
+    this.hooks.dirty("meta");
+    this.hooks.lobbyChanged();
+  }
+
+  /**
+   * Removes a player (admin) and stops them registering again. Before the start they leave the field;
+   * once it's running they're knocked out at their table, or as soon as they reach their next one.
+   */
+  kick(userId: number, now: number) {
+    const m = this.meta;
+    if (m.status === "finished" || m.status === "cancelled") throw new TournamentError("The tournament is already over");
+    const e = m.entrants[userId];
+    const asked = Boolean(m.pending?.[userId]);
+    if (!e && !asked) throw new TournamentError("That player isn't in this tournament");
+    if (m.kicked?.includes(userId)) throw new TournamentError("That player was already kicked");
+    if (e && e.place !== null) throw new TournamentError("That player is already out");
+    if (!(m.kicked ??= []).includes(userId)) m.kicked.push(userId);
+    if (asked) delete m.pending![userId];
+    if (e && m.status === "registering") delete m.entrants[userId];
+    else if (e && this.locate(userId)) this.removeSeated(userId, now);
     this.hooks.dirty("meta");
     this.hooks.lobbyChanged();
   }
@@ -257,7 +342,7 @@ export class Tournament {
   }
 
   /** Removes a seated player (admin). Their opponent wins the match. */
-  kick(userId: number, now: number) {
+  private removeSeated(userId: number, now: number) {
     const loc = this.locate(userId);
     if (!loc) throw new TournamentError("That player is not seated");
     const { table } = loc;
@@ -326,6 +411,12 @@ export class Tournament {
     const m = this.meta;
     if (m.status === "registering" && !m.paused && now >= m.config.startTime && this.entrantCount >= 2) this.start(now);
     if (m.status !== "running" || m.paused) return;
+
+    // Players removed while waiting for their next table leave as soon as they're seated there.
+    for (const id of m.kicked ?? []) {
+      const loc = this.locate(id);
+      if (loc && !(loc.seat as { leaving?: boolean }).leaving) this.removeSeated(id, now);
+    }
 
     for (const t of [...this.tables.values()]) this.tickTable(t, now);
     if (m.status !== "running") return; // the final may have just finished
@@ -459,7 +550,7 @@ export class Tournament {
     if (left.length > 1 && !champ) return;
     if (champ && left.length > 1) this.hooks.tableNews(t.id, [`${this.name(champ.userId)} wins the match ${champ.wins}–${left.find((s) => s !== champ)!.wins}`]);
     this.knockOut(t, left.filter((s) => s !== champ).map((s) => s.userId));
-    this.closeTable(t.id);
+    this.closeTable(t.id, champ?.userId ?? null);
     this.completeNode(this.node(t.id), champ?.userId ?? null, now);
   }
 
@@ -554,9 +645,9 @@ export class Tournament {
     return { table, seat: table.seats[seatIdx]!, seatIdx };
   }
 
-  private closeTable(id: number) {
+  private closeTable(id: number, winnerId: number | null = null) {
     this.tables.delete(id);
-    this.hooks.tableClosed(id);
+    this.hooks.tableClosed(id, winnerId);
     this.hooks.dirty({ tableId: id, deleted: true });
   }
 
@@ -622,13 +713,23 @@ export class Tournament {
       totalRounds: m.status === "registering" ? bracketShape(Math.max(2, this.entrantCount)).length : m.totalRounds,
       activeTables: this.tables.size,
       registrationOpen: m.status === "registering" && this.entrantCount < m.config.maxPlayers,
+      access: this.access,
       me:
         viewerId === null
           ? null
           : e
-            ? { registered: true, tableId: e.tableId, place: e.place, round: e.round, waiting }
-            : { registered: false, tableId: null, place: null, round: 0, waiting: null },
+            ? { registered: true, pending: false, removed: false, tableId: e.tableId, place: e.place, round: e.round, waiting }
+            : { registered: false, pending: Boolean(m.pending?.[viewerId]), removed: Boolean(m.kicked?.includes(viewerId)), tableId: null, place: null, round: 0, waiting: null },
     };
+  }
+
+  /** Still in contention: asked to join, registered, playing, or waiting for a next match. */
+  isStillPlaying(userId: number): boolean {
+    const m = this.meta;
+    if (m.status !== "registering" && m.status !== "running") return false;
+    if (m.pending?.[userId]) return true;
+    const e = m.entrants[userId];
+    return Boolean(e && e.place === null);
   }
 
   /** Everything about a board. Chess has no hidden information; only the legal moves are personal. */
@@ -723,6 +824,7 @@ export class Tournament {
             players: seated.map((s) => this.name(s.userId)),
             score: seated.map((s) => s.wins).join("–"),
             gameNo: t.gameNo,
+            viewers: this.hooks.viewerCount(t.id),
           };
         }),
       standings: [...alive, ...out].slice(0, 300).map((e) => ({

@@ -113,14 +113,29 @@ function TournamentCard({ t }: { t: TournamentSummary }) {
               </button>
             )}
           </>
+        ) : me?.removed ? (
+          <span className="muted">An admin removed you from this tournament</span>
+        ) : me?.pending ? (
+          <>
+            <span className="muted">⏳ Asked to join · waiting for an admin to let you in</span>
+            <button className="btn ghost" onClick={() => send({ type: "unregister", tournamentId: t.id })}>
+              Cancel request
+            </button>
+          </>
         ) : t.registrationOpen ? (
           <button className="btn primary" onClick={() => send({ type: "register", tournamentId: t.id })}>
-            Register
+            {t.access === "closed" ? "Ask to join" : "Register"}
           </button>
         ) : null}
-        <button className="btn ghost" onClick={open}>
-          {t.status === "running" ? "Watch" : "Details"}
-        </button>
+        {t.status === "running" ? (
+          <button className={`btn ${me?.tableId != null ? "ghost" : "primary"}`} onClick={() => navigate(`/t/${t.id}/watch`)}>
+            👁 Watch live
+          </button>
+        ) : (
+          <button className="btn ghost" onClick={open}>
+            Details
+          </button>
+        )}
       </div>
     </div>
   );
@@ -146,6 +161,8 @@ function CreateTournament() {
     breakMinutes: 5,
     decisionSeconds: 20,
     payoutPercent: 15,
+    afkKickMinutes: 5,
+    rabbitHunt: "on",
   }));
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.type === "number" || k === "maxPlayers" ? Number(e.target.value) : e.target.value }));
@@ -219,6 +236,14 @@ function CreateTournament() {
         {num("breakMinutes", "Break length (min)", 0, 60)}
         {num("decisionSeconds", "Seconds per decision", 5, 120)}
         {num("payoutPercent", "% of field paid", 1, 50)}
+        {num("afkKickMinutes", "Kick AFK players after (min, 0 = never)", 0, 60)}
+        <label>
+          Rabbit Hunt
+          <select value={form.rabbitHunt} onChange={set("rabbitHunt")}>
+            <option value="on">On — show the cards that would have come</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
       </div>
       <div className="row">
         <button className="btn primary" disabled={busy}>

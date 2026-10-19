@@ -114,3 +114,49 @@ const sharedIpStmt = db.prepare(`
 export function usersSharingIp(userId: number): number[] {
   return (sharedIpStmt.all(userId) as { userId: number }[]).map((r) => r.userId);
 }
+
+const userByDiscordStmt = db.prepare(`SELECT id, discord_id, username, avatar, banned FROM users WHERE discord_id = ?`);
+const discordIdStmt = db.prepare(`SELECT discord_id FROM users WHERE id = ?`);
+
+/** The site account for a Discord account, for the hub (which only knows Discord IDs). */
+export function findUserByDiscordId(discordId: string): User | null {
+  const r = userByDiscordStmt.get(discordId) as UserRow | undefined;
+  return r ? toUser(r) : null;
+}
+
+export function discordIdOf(userId: number): string | null {
+  return (discordIdStmt.get(userId) as { discord_id: string } | undefined)?.discord_id ?? null;
+}
+
+const visitsStmt = db.prepare(`SELECT created_at, last_login FROM users WHERE id = ?`);
+const ipsStmt = db.prepare(`SELECT ip, first_seen, last_seen FROM user_ips WHERE user_id = ? ORDER BY last_seen DESC LIMIT 5`);
+const sharingStmt = db.prepare(`
+  SELECT DISTINCT u.discord_id, u.username FROM user_ips a
+  JOIN user_ips b ON a.ip = b.ip AND b.user_id != a.user_id
+  JOIN users u ON u.id = b.user_id
+  WHERE a.user_id = ?
+  LIMIT 10
+`);
+
+export interface PlayerRecord {
+  /** First sign-in on this site. */
+  firstVisit: number | null;
+  /** Latest sign-in or connection. */
+  lastVisit: number | null;
+  /** Latest first. */
+  ips: { ip: string; firstSeen: number; lastSeen: number }[];
+  /** Other accounts that have used one of these IPs. */
+  sharedIpWith: { discordId: string; username: string }[];
+}
+
+/** What this site knows about an account, for the admin's player details in the hub. */
+export function playerRecord(userId: number): PlayerRecord {
+  const v = visitsStmt.get(userId) as { created_at: number; last_login: number } | undefined;
+  const ips = (ipsStmt.all(userId) as { ip: string; first_seen: number; last_seen: number }[]).map((r) => ({ ip: r.ip, firstSeen: r.first_seen, lastSeen: r.last_seen }));
+  return {
+    firstVisit: v?.created_at ?? null,
+    lastVisit: Math.max(v?.last_login ?? 0, ...ips.map((i) => i.lastSeen)) || null,
+    ips,
+    sharedIpWith: (sharingStmt.all(userId) as { discord_id: string; username: string }[]).map((r) => ({ discordId: r.discord_id, username: r.username })),
+  };
+}

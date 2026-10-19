@@ -6,18 +6,20 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { config } from "./config.ts";
+import { type PlayerRecord, discordIdOf, findUserByDiscordId, playerRecord } from "./db.ts";
 import { runAdminOp } from "./routes.ts";
 import type { CreateOptions, TournamentManager } from "./tournament/manager.ts";
 import { loadEndedMetas, loadMeta, loadResults } from "./tournament/store.ts";
 import { BLIND_PRESETS, type BlindPreset, PLAYER_CAPS, StructureError, defaultConfig } from "./tournament/structure.ts";
-import { TournamentError } from "./tournament/tournament.ts";
-import type { Level, TournamentMeta, TournamentStatus } from "./tournament/types.ts";
+import { type Tournament, TournamentError } from "./tournament/tournament.ts";
+import type { Level, TournamentMeta, TournamentStatus, LobbyAccess } from "./tournament/types.ts";
 
 const GAME_KEY = "poker";
 const MAX_SKEW_MS = 5 * 60_000;
 const DEFAULT_ENDED_WINDOW_MS = 7 * 86_400_000;
 const STATUSES: TournamentStatus[] = ["registering", "running", "finished", "cancelled"];
 const OPS = new Set(["start", "pause", "resume", "cancel"]);
+const PLAYER_ACTIONS = new Set(["approve", "deny", "kick"]);
 
 export interface EventField {
   name: string;
@@ -39,10 +41,15 @@ export interface EventSummary {
   status: TournamentStatus;
   startTime: number;
   entrants: number;
+  access: LobbyAccess;
+  /** Join requests waiting for an admin. */
+  pending: number;
   maxPlayers: number;
   startedAt: number | null;
   finishedAt: number | null;
   url: string;
+  /** Where people can watch it live. Only while it's running. */
+  watchUrl: string | null;
 }
 
 export function hubSignature(secret: string, timestamp: string, rawBody: string) {
@@ -63,6 +70,17 @@ function fields(): EventField[] {
   return [
     { name: "name", label: "Name", type: "text", default: d.name, help: "Up to 60 characters." },
     { name: "startTime", label: "Start time", type: "datetime", help: "It starts by itself at this time if at least two players have registered." },
+    {
+      name: "access",
+      label: "Lobby",
+      type: "select",
+      default: "open",
+      options: [
+        { value: "open", label: "Open: anyone can join" },
+        { value: "closed", label: "Closed: you approve each player" },
+      ],
+      help: "Closed: players ask to join, and you let them in from the event's page in LucidHub.",
+    },
     {
       name: "maxPlayers",
       label: "Player cap",
@@ -95,7 +113,27 @@ function fields(): EventField[] {
     { name: "breakMinutes", label: "Break length (minutes)", type: "number", default: d.breakMinutes, min: 0, max: 60 },
     { name: "decisionSeconds", label: "Decision time (seconds)", type: "number", default: d.decisionSeconds, min: 5, max: 120 },
     { name: "timeBankSeconds", label: "Time bank (seconds)", type: "number", default: d.timeBankSeconds, min: 0, max: 600 },
+    {
+      name: "afkKickMinutes",
+      label: "Kick AFK players after (minutes)",
+      type: "number",
+      default: d.afkKickMinutes,
+      min: 0,
+      max: 60,
+      help: "A player who times out or sits out is removed after this long, as if knocked out. Pauses and breaks don't count. 0 = never.",
+    },
     { name: "payoutPercent", label: "Paid places (% of field)", type: "number", default: d.payoutPercent, min: 1, max: 50 },
+    {
+      name: "rabbitHunt",
+      label: "Rabbit Hunt",
+      type: "select",
+      default: "on",
+      options: [
+        { value: "on", label: "On" },
+        { value: "off", label: "Off" },
+      ],
+      help: "After a hand, show the cards that would have come. Players who folded see their own cards and whether they'd have won against the hands that were shown.",
+    },
   ];
 }
 
@@ -106,14 +144,78 @@ function toSummary(m: TournamentMeta): EventSummary {
     status: m.status,
     startTime: m.config.startTime,
     entrants: Object.keys(m.entrants).length,
+    access: m.access ?? "open",
+    pending: m.status === "registering" ? Object.keys(m.pending ?? {}).length : 0,
     maxPlayers: m.config.maxPlayers,
     startedAt: m.startedAt,
     finishedAt: m.finishedAt,
     url: `${config.publicUrl}/#/t/${m.id}`,
+    watchUrl: m.status === "running" ? `${config.publicUrl}/#/t/${m.id}/watch` : null,
   };
 }
 
 const parseId = (id: string) => (/^\d+$/.test(id) ? Number(id) : NaN);
+
+export interface EventPlayer {
+  discordId: string;
+  username: string;
+  avatarUrl: string;
+  /** "removed": kicked by an admin. "afk": removed for staying away longer than the event's AFK limit. */
+  status: "pending" | "registered" | "playing" | "waiting" | "out" | "removed" | "afk";
+  place: number | null;
+  /** When they registered, or asked to join. */
+  joinedAt: number;
+  online: boolean;
+  record: PlayerRecord;
+}
+
+const STATUS_ORDER: EventPlayer["status"][] = ["pending", "playing", "waiting", "registered", "out", "afk", "removed"];
+
+/** Everyone in a tournament, plus (before the start) everyone asking to join. For the hub's lobby panel. */
+function playerList(m: TournamentMeta, manager: TournamentManager): EventPlayer[] {
+  const kicked = new Set(m.kicked ?? []);
+  const afk = new Set(m.afkKicked ?? []);
+  const pending: EventPlayer[] =
+    m.status === "registering"
+      ? Object.values(m.pending ?? {}).map((p) => ({
+          discordId: discordIdOf(p.userId) ?? "",
+          username: p.username,
+          avatarUrl: p.avatarUrl,
+          status: "pending",
+          place: null,
+          joinedAt: p.requestedAt,
+          online: manager.isOnline(p.userId),
+          record: playerRecord(p.userId),
+        }))
+      : [];
+  const entrants = Object.values(m.entrants).map(
+    (e): EventPlayer => ({
+      discordId: discordIdOf(e.userId) ?? "",
+      username: e.username,
+      avatarUrl: e.avatarUrl,
+      status: kicked.has(e.userId)
+        ? "removed"
+        : afk.has(e.userId)
+          ? "afk"
+          : e.place !== null
+            ? "out"
+            : m.status === "registering"
+              ? "registered"
+              : e.tableId !== null
+                ? "playing"
+                : e.advancedTo !== null
+                  ? "waiting"
+                  : "out",
+      place: e.place,
+      joinedAt: e.registeredAt,
+      online: manager.isOnline(e.userId),
+      record: playerRecord(e.userId),
+    }),
+  );
+  return [...pending, ...entrants].sort(
+    (a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || (a.place ?? 0) - (b.place ?? 0) || a.username.localeCompare(b.username),
+  );
+}
 
 /**
  * onShutdown lets the hub stop this server cleanly (it starts it as a background process, and Windows
@@ -181,6 +283,46 @@ export function registerIntegrationRoutes(app: FastifyInstance, manager: Tournam
         .map(toSummary);
     });
 
+    /** Runs an admin change on a live tournament, then answers with its lobby. */
+    const changeLobby = (rawId: string, reply: FastifyReply, what: string, change: (t: Tournament, now: number) => void) => {
+      const id = parseId(rawId);
+      const t = manager.get(id);
+      if (!t) return loadMeta(id) ? reply.code(400).send({ error: "The tournament is already over" }) : reply.code(404).send({ error: "not_found" });
+      try {
+        change(t, Date.now());
+      } catch (err) {
+        if (err instanceof TournamentError) return reply.code(400).send({ error: err.message });
+        throw err;
+      }
+      console.log(`[hub] ${what} in "${t.config.name}"`);
+      return { access: t.access, players: playerList(t.meta, manager) };
+    };
+
+    scope.get<{ Params: { id: string } }>("/api/integration/events/:id/players", async (req, reply) => {
+      const id = parseId(req.params.id);
+      const meta = manager.get(id)?.meta ?? loadMeta(id);
+      if (!meta) return reply.code(404).send({ error: "not_found" });
+      return { access: meta.access ?? "open", players: playerList(meta, manager) };
+    });
+
+    scope.post<{ Params: { id: string }; Body: { access?: string } | undefined }>("/api/integration/events/:id/access", async (req, reply) => {
+      const access = req.body?.access;
+      if (access !== "open" && access !== "closed") return reply.code(400).send({ error: "The lobby must be open or closed" });
+      return changeLobby(req.params.id, reply, `Lobby ${access}`, (t, now) => t.setAccess(access, now));
+    });
+
+    scope.post<{ Params: { id: string; discordId: string; action: string } }>("/api/integration/events/:id/players/:discordId/:action", async (req, reply) => {
+      const { action, discordId } = req.params;
+      if (!PLAYER_ACTIONS.has(action)) return reply.code(404).send({ error: "unknown_action" });
+      const user = findUserByDiscordId(discordId);
+      if (!user) return reply.code(404).send({ error: "That player isn't in this tournament" });
+      return changeLobby(req.params.id, reply, `${action} ${user.username}`, (t, now) => {
+        if (action === "approve") t.approve(user.id, now);
+        else if (action === "deny") t.deny(user.id);
+        else t.kick(user.id, now);
+      });
+    });
+
     scope.post<{ Params: { id: string; op: string } }>("/api/integration/events/:id/:op", async (req, reply) => {
       const id = parseId(req.params.id);
       if (!OPS.has(req.params.op)) return reply.code(404).send({ error: "unknown_op" });
@@ -211,10 +353,27 @@ export function registerIntegrationRoutes(app: FastifyInstance, manager: Tournam
 
 /** Tells the hub a tournament has finished. Fire-and-forget: the hub also polls, so failures only log. */
 export function notifyHubEventFinished(tournamentId: number) {
+  postToHub("event.finished", tournamentId);
+}
+
+const changeTimers = new Map<number, ReturnType<typeof setTimeout>>();
+
+/** Tells the hub a tournament's players or status changed, so its dashboard stays live. At most once a second per tournament. */
+export function notifyHubEventChanged(tournamentId: number) {
+  if (!config.hub.secret || changeTimers.has(tournamentId)) return;
+  const timer = setTimeout(() => {
+    changeTimers.delete(tournamentId);
+    postToHub("event.updated", tournamentId);
+  }, 1000);
+  timer.unref?.();
+  changeTimers.set(tournamentId, timer);
+}
+
+function postToHub(type: "event.finished" | "event.updated", tournamentId: number) {
   const { url, secret } = config.hub;
   if (!secret) return;
   try {
-    const body = JSON.stringify({ type: "event.finished", externalId: String(tournamentId) });
+    const body = JSON.stringify({ type, externalId: String(tournamentId) });
     const timestamp = String(Date.now());
     fetch(`${url}/api/games/${GAME_KEY}/webhook`, {
       method: "POST",
@@ -227,10 +386,10 @@ export function notifyHubEventFinished(tournamentId: number) {
       signal: AbortSignal.timeout(10_000),
     })
       .then((res) => {
-        if (!res.ok) console.warn(`[hub] Webhook for tournament ${tournamentId} got HTTP ${res.status}`);
+        if (!res.ok) console.warn(`[hub] ${type} webhook for tournament ${tournamentId} got HTTP ${res.status}`);
       })
-      .catch((err: unknown) => console.warn(`[hub] Webhook for tournament ${tournamentId} failed:`, err instanceof Error ? err.message : err));
+      .catch((err: unknown) => console.warn(`[hub] ${type} webhook for tournament ${tournamentId} failed:`, err instanceof Error ? err.message : err));
   } catch (err) {
-    console.warn(`[hub] Webhook for tournament ${tournamentId} failed:`, err);
+    console.warn(`[hub] ${type} webhook for tournament ${tournamentId} failed:`, err);
   }
 }

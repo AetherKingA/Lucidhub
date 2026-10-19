@@ -7,10 +7,12 @@ import { db } from "./db.ts";
 import { DeliveryWorker } from "./delivery.ts";
 import { keepAwake } from "./keepAwake.ts";
 import { ProcessManager } from "./processes.ts";
-import { syncAll } from "./sync.ts";
+import { syncAll, syncLive } from "./sync.ts";
 
 const DELIVERY_EVERY_MS = 10_000;
 const SYNC_EVERY_MS = 2 * 60_000;
+/** Games with an event open or under way are re-read this often (on top of their webhooks) so player counts stay live. */
+const LIVE_SYNC_EVERY_MS = 15_000;
 
 const bot = new Bot();
 const worker = new DeliveryWorker(bot);
@@ -27,6 +29,7 @@ const runSafely = (what: string, fn: () => Promise<unknown>) => () =>
   void fn().catch((err) => console.error(`[hub] ${what} failed:`, err));
 const deliverTimer = setInterval(runSafely("Delivery", () => worker.tick()), DELIVERY_EVERY_MS);
 const syncTimer = setInterval(runSafely("Sync", syncAll), SYNC_EVERY_MS);
+const liveSyncTimer = setInterval(runSafely("Sync", syncLive), LIVE_SYNC_EVERY_MS);
 runSafely("Sync", syncAll)();
 
 const awake = config.keepAwake ? keepAwake() : null;
@@ -39,6 +42,7 @@ async function shutdown(signal: string) {
   try {
     clearInterval(deliverTimer);
     clearInterval(syncTimer);
+    clearInterval(liveSyncTimer);
     await servers.stopAll(); // each game saves its state and exits
     await bot.stop();
     await app.close();

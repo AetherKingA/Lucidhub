@@ -1,4 +1,5 @@
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from "react";
+import { KIND_LABEL, PRIZE_KINDS } from "../shared/prizeKinds.ts";
 import type { AwardStatus, BotStatus, GameEventStatus, GameRow, Prize, PrizeRule, Template } from "../shared/protocol.ts";
 import { api, placeLabel } from "./api.ts";
 
@@ -165,12 +166,59 @@ export function ChannelPicker({ value, onChange, placeholder = "Default channel"
   );
 }
 
-/** Edits a prize ladder: rows of "places X to Y win prize Z", plus loading/saving templates. */
+/** The lowest place no row covers yet: 1st, then 2nd… and it fills gaps left by a removed row. */
+const firstFreePlace = (rules: PrizeRule[]) =>
+  [...rules].sort((a, b) => a.placeFrom - b.placeFrom).reduce((n, r) => (r.placeFrom <= n ? Math.max(n, r.placeTo + 1) : n), 1);
+
+/** A prize dropdown grouped into Lucid accounts, Lupees and other prizes, biggest first. */
+function PrizeSelect({ value, prizes, disabled, onChange }: { value: number; prizes: Prize[]; disabled?: boolean; onChange: (id: number) => void }) {
+  return (
+    <select value={value || ""} disabled={disabled} onChange={(e) => onChange(Number(e.target.value))}>
+      <option value="">Pick a prize…</option>
+      {PRIZE_KINDS.map((kind) => {
+        const group = prizes.filter((p) => p.kind === kind);
+        if (group.length === 0) return null;
+        return (
+          <optgroup key={kind} label={KIND_LABEL[kind]}>
+            {group.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+                {p.type === "code_pool" ? ` (${p.stock} code${p.stock === 1 ? "" : "s"} left)` : ""}
+              </option>
+            ))}
+          </optgroup>
+        );
+      })}
+    </select>
+  );
+}
+
+/**
+ * Edits a prize ladder: one row per place with the prize it wins, picked from a dropdown. A row can cover a
+ * range of places (4th–10th), and a place can have several rows to win several prizes. Plus saved ladders.
+ */
 export function LadderEditor({ rules, onChange, disabled }: { rules: PrizeRule[]; onChange: (r: PrizeRule[]) => void; disabled?: boolean }) {
   const { prizes, templates, reload, toast } = useHub();
+  /** The row whose place boxes are open. Ranges always show theirs; a single place shows them after clicking its tag. */
+  const [placesOpen, setPlacesOpen] = useState<number | null>(null);
   const active = prizes.filter((p) => !p.archived);
   const update = (i: number, patch: Partial<PrizeRule>) => onChange(rules.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-  const nextPlace = rules.reduce((m, r) => Math.max(m, r.placeTo), 0) + 1;
+  const nextPlace = firstFreePlace(rules);
+  /** Inserts a row and keeps rows in place order. The sort is stable, so "also give" rows stay under their place. */
+  const add = (rule: PrizeRule, at = rules.length) => {
+    setPlacesOpen(null);
+    onChange([...rules.slice(0, at), rule, ...rules.slice(at)].sort((a, b) => a.placeFrom - b.placeFrom));
+  };
+  const remove = (i: number) => {
+    setPlacesOpen(null);
+    onChange(rules.filter((_, j) => j !== i));
+  };
+  /** Closing a row's place boxes fixes a range typed backwards ("to" before "from"). */
+  const closePlaces = (i: number) => {
+    setPlacesOpen(null);
+    const r = rules[i];
+    if (r && !(r.placeTo >= r.placeFrom)) update(i, { placeTo: r.placeFrom });
+  };
 
   const saveAsTemplate = async () => {
     const name = prompt("Name this prize ladder so you can reuse it (e.g. Weekly poker):");
@@ -196,41 +244,58 @@ export function LadderEditor({ rules, onChange, disabled }: { rules: PrizeRule[]
       {rules.length === 0 && <p className="muted small">No prizes attached — winners won't get anything from this event.</p>}
       {rules.map((r, i) => {
         const prize = prizes.find((p) => p.id === r.prizeId);
+        const showPlaces = r.placeTo !== r.placeFrom || placesOpen === i;
         return (
           <div className="ladder-row" key={i}>
-            <span className="place-tag">{placeLabel(r.placeFrom, r.placeTo)}</span>
-            <label className="inline">
-              Place
-              <input type="number" min={1} value={r.placeFrom} disabled={disabled} onChange={(e) => update(i, { placeFrom: Number(e.target.value), placeTo: Math.max(Number(e.target.value), r.placeTo) })} />
-            </label>
-            <label className="inline">
-              to
-              <input type="number" min={r.placeFrom} value={r.placeTo} disabled={disabled} onChange={(e) => update(i, { placeTo: Number(e.target.value) })} />
-            </label>
-            <select value={r.prizeId || ""} disabled={disabled} onChange={(e) => update(i, { prizeId: Number(e.target.value) })}>
-              <option value="">Pick a prize…</option>
-              {active.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                  {p.type === "code_pool" ? ` (${p.stock} codes left)` : ""}
-                </option>
-              ))}
-            </select>
+            {disabled ? (
+              <span className="place-tag">{placeLabel(r.placeFrom, r.placeTo)}</span>
+            ) : (
+              <button className="place-tag" title="Change the place" onClick={() => setPlacesOpen(i)}>
+                {placeLabel(r.placeFrom, r.placeTo)}
+              </button>
+            )}
+            {showPlaces && !disabled && (
+              <span className="row" onFocus={() => setPlacesOpen(i)} onBlur={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && closePlaces(i)}>
+                <label className="inline">
+                  Place
+                  <input
+                    type="number"
+                    min={1}
+                    value={r.placeFrom}
+                    autoFocus={r.placeTo === r.placeFrom}
+                    onChange={(e) => update(i, { placeFrom: Number(e.target.value), placeTo: Math.max(Number(e.target.value), r.placeTo) })}
+                  />
+                </label>
+                <label className="inline">
+                  to
+                  <input type="number" min={r.placeFrom} value={r.placeTo} onChange={(e) => update(i, { placeTo: Number(e.target.value) })} />
+                </label>
+              </span>
+            )}
+            <PrizeSelect value={r.prizeId} prizes={active} disabled={disabled} onChange={(prizeId) => update(i, { prizeId })} />
             {prize?.type === "code_pool" && prize.stock < r.placeTo - r.placeFrom + 1 && (
               <span className="warn small">Only {prize.stock} code{prize.stock === 1 ? "" : "s"} — add more or late winners wait</span>
             )}
             {!disabled && (
-              <button className="link danger" onClick={() => onChange(rules.filter((_, j) => j !== i))}>
-                Remove
-              </button>
+              <>
+                <button className="link" title={`Give ${placeLabel(r.placeFrom, r.placeTo)} place another prize as well`} onClick={() => add({ placeFrom: r.placeFrom, placeTo: r.placeTo, prizeId: 0 }, i + 1)}>
+                  + also give
+                </button>
+                <button className="link danger" onClick={() => remove(i)}>
+                  Remove
+                </button>
+              </>
             )}
           </div>
         );
       })}
       {!disabled && (
         <div className="row">
-          <button className="btn ghost small-btn" onClick={() => onChange([...rules, { placeFrom: nextPlace, placeTo: nextPlace, prizeId: active[0]!.id }])}>
-            + Add prize for {placeLabel(nextPlace, nextPlace)} place
+          <button className="btn ghost small-btn" onClick={() => add({ placeFrom: nextPlace, placeTo: nextPlace, prizeId: 0 })}>
+            + Add {placeLabel(nextPlace, nextPlace)} place
+          </button>
+          <button className="link" onClick={() => add({ placeFrom: nextPlace, placeTo: nextPlace + 4, prizeId: 0 })}>
+            + Add a range ({placeLabel(nextPlace, nextPlace + 4)})
           </button>
           {templates.length > 0 && (
             <select value="" onChange={(e) => onChange(templates.find((t) => t.id === Number(e.target.value))?.rules ?? rules)}>

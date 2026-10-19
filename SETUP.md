@@ -86,6 +86,25 @@ Click it, approve, and press **Restart**.
 - How the tournaments work (format, pausing, shared-IP flags): `games/poker-tournament/README.md`,
   `games/uno-tournament/README.md` and `games/chess-tournament/README.md`.
 
+### Lobby and players
+
+An event's page has a **Lobby** panel while it's upcoming or running:
+
+- **Open / Closed:** in a closed lobby players ask to join and you **Let in** or **Turn down** each one.
+  Opening the lobby lets everyone waiting in.
+- **Kick** removes a player for good: they're knocked out if it's running and can't register again.
+- **Details** on a player shows their Discord ID and account age, when they joined, whether they're
+  on the game site now, the IPs they've used (with a rough location and network), and any other
+  account that has used the same IP.
+
+**IP locations** come from the free DB-IP Lite databases, looked up on this PC (IPs are never sent
+anywhere). Download *IP to City Lite* and *IP to ASN Lite* in MMDB format from
+<https://db-ip.com/db/lite.php>, unzip them, and put the `.mmdb` files in `event-hub/data/geoip/`.
+LucidHub picks them up within a minute; for fresher data, drop in next month's files the same way
+(the newest is used). Without them everything else still works, just without locations. Locations are
+approximate (city level at best, and a VPN shows the VPN's location). The data is licensed CC BY 4.0:
+"IP Geolocation by DB-IP".
+
 ### What happens when something goes wrong
 
 - **A winner has DMs turned off:** the bot pings them in the announcement channel to type

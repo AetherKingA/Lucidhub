@@ -51,3 +51,61 @@ describe("visibility", () => {
     expect(checked).toBeGreaterThan(500);
   });
 });
+
+describe("host view (admins who aren't playing see every hand)", () => {
+  const ADMIN = 99;
+  const admin = { id: ADMIN, isAdmin: true };
+
+  function running() {
+    const s = { rng: 3 };
+    const t = Tournament.create(1, { ...defaultConfig(), startTime: T0, tableSize: 4, winsToAdvance: 2, stacking: true }, T0, undefined, () => nextRandom(s));
+    for (let i = 1; i <= 8; i++) t.register({ id: i, username: `P${i}`, avatarUrl: "" }, T0);
+    return t;
+  }
+
+  it("is only for admins with no stake in the tournament, and only while it runs", () => {
+    const t = running();
+    expect(t.canSeeAllCards(admin)).toBe(false);
+    t.start(T0);
+    expect(t.canSeeAllCards(admin)).toBe(true);
+    expect(t.canSeeAllCards({ id: ADMIN, isAdmin: false })).toBe(false);
+    // Seated, waiting for a next table, or asked to join: no.
+    expect(t.canSeeAllCards({ id: 1, isAdmin: true })).toBe(false);
+    const e = t.meta.entrants[2]!;
+    e.tableId = null;
+    e.advancedTo = 99;
+    expect(t.canSeeAllCards({ id: 2, isAdmin: true })).toBe(false);
+    t.meta.pending = { [ADMIN]: { userId: ADMIN } as never };
+    expect(t.canSeeAllCards(admin)).toBe(false);
+    delete t.meta.pending[ADMIN];
+    // Knocked out: like any other admin.
+    e.place = 8;
+    expect(t.canSeeAllCards({ id: 2, isAdmin: true })).toBe(true);
+    t.meta.status = "finished";
+    expect(t.canSeeAllCards(admin)).toBe(false);
+  });
+
+  it("shows every player's hand to the host only, with no actions, and never the draw pile", () => {
+    const t = running();
+    t.start(T0);
+    const table = [...t.tables.values()][0]!;
+    let now = T0;
+    while (!table.game && now < T0 + 60_000) t.tick((now += 500));
+    const g = table.game!;
+    const seated = table.seats.find((s) => s)!.userId;
+    expect(t.hostView(table.id, { id: seated, isAdmin: true }, now)).toBeNull();
+    expect(t.hostView(table.id, { id: ADMIN, isAdmin: false }, now)).toBeNull();
+    const view = t.hostView(table.id, admin, now)!;
+    expect(view.hostView).toBe(true);
+    expect(view.legal).toBeNull();
+    expect(view.mySeat).toBeNull();
+    expect(view.myHand).toEqual([]);
+    expect(view.canCallUno).toBe(false);
+    for (const p of g.players) expect([...view.seats[p.seat]!.hand!].sort()).toEqual([...p.hand].sort());
+    expect(JSON.stringify(view)).not.toMatch(/"(drawPile|discard|rng)"/);
+    // Everyone else's view is unchanged.
+    const spectator = t.tableView(table.id, null, now)!;
+    expect(spectator.hostView).toBe(false);
+    for (const s of spectator.seats) if (s) expect(s.hand).toBeUndefined();
+  });
+});

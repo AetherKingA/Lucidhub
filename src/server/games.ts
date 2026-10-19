@@ -3,7 +3,7 @@
 import { randomBytes } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
-import type { GameEvent, GameInfo, GameOp, GameResults, GameRow } from "../shared/protocol.ts";
+import type { GameEvent, GameInfo, GameLobby, GameOp, GameResults, GameRow, LobbyAccess, PlayerAction } from "../shared/protocol.ts";
 import { ROOT, config } from "./config.ts";
 import { db } from "./db.ts";
 import { sign } from "./signing.ts";
@@ -282,6 +282,12 @@ export const gameClient = {
     call<GameEvent>(g, "POST", `/api/integration/events/${encodeURIComponent(externalId)}/${op}`, {}),
   results: (g: Game, externalId: string) =>
     call<GameResults>(g, "GET", `/api/integration/events/${encodeURIComponent(externalId)}/results`),
+  /** Who's in an event, and who's asking to join. Optional in the contract: 404 means "not supported". */
+  players: (g: Game, externalId: string) => call<GameLobby>(g, "GET", `/api/integration/events/${encodeURIComponent(externalId)}/players`),
+  setAccess: (g: Game, externalId: string, access: LobbyAccess) =>
+    call<GameLobby>(g, "POST", `/api/integration/events/${encodeURIComponent(externalId)}/access`, { access }),
+  playerAction: (g: Game, externalId: string, discordId: string, action: PlayerAction) =>
+    call<GameLobby>(g, "POST", `/api/integration/events/${encodeURIComponent(externalId)}/players/${encodeURIComponent(discordId)}/${action}`, {}),
   /** Asks the game server to save and exit. Optional in the contract: a 404 means "not supported". */
   shutdown: (g: Game) => call<{ ok: boolean }>(g, "POST", "/api/integration/shutdown", {}),
 };

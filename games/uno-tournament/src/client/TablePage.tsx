@@ -3,16 +3,29 @@ import type { Card, ClientAction, Color, SeatView, TableView } from "../shared/p
 import { COLOR_CLASS, COLOR_LABEL, CardBack, UnoCard } from "./Cards.tsx";
 import { TableChat } from "./Chat.tsx";
 import { tableKey, useGame, useServerNow } from "./game.tsx";
+import { LiveTables, useTournamentDetail } from "./TournamentPage.tsx";
 
 export function TablePage({ tournamentId, tableId }: { tournamentId: number; tableId: number }) {
-  const { tables, chats, send, tournaments, status } = useGame();
-  const view = tables[tableKey(tournamentId, tableId)];
+  const { tables, chats, spectatorChats, viewers, follows, send, tournaments, status, user } = useGame();
+  const k = tableKey(tournamentId, tableId);
+  const view = tables[k];
   const summary = tournaments.find((t) => t.id === tournamentId);
   const [sound, setSound] = usePref("uno:sound", true);
   // On narrow screens the chat covers the table, so it starts closed there.
   const [chatOpen, setChatOpen] = usePref("uno:chat", typeof innerWidth === "number" && innerWidth >= 1100);
-  const messages = chats[tableKey(tournamentId, tableId)] ?? [];
-  const unread = useUnread(messages.length, chatOpen);
+  const messages = chats[k] ?? [];
+  const spectatorMessages = spectatorChats[k] ?? [];
+  const seated = view?.mySeat != null;
+  const unread = useUnread(messages.length + (seated ? 0 : spectatorMessages.length), chatOpen);
+  const watching = viewers[k] ?? 0;
+  const following = follows[tournamentId] ?? null;
+  const me = summary?.me;
+  const stillPlaying = Boolean(me && ((me.registered && me.place === null) || me.pending));
+  // Spectators who are out of (or never in) a running tournament can follow a player around.
+  const canFollow = Boolean(view && !seated && !stillPlaying && summary?.status === "running");
+  const follow = (userId: number | null) => send({ type: "follow", tournamentId, userId });
+  // The list of other tables, for when this one has finished.
+  const { detail } = useTournamentDetail(tournamentId, !view);
 
   // Subscribe while this page is open (own table is subscribed automatically anyway).
   useEffect(() => {
@@ -40,6 +53,19 @@ export function TablePage({ tournamentId, tableId }: { tournamentId: number; tab
               <span className="lc-pill muted">{summary?.remaining ?? 0} left</span>
             </span>
           )}
+          {watching > 0 && (
+            <span className="lc-pill muted" title="People watching this table">
+              👁 {watching} watching
+            </span>
+          )}
+          {following && (
+            <span className="lc-pill follow-chip">
+              Following <b>{following.username}</b>
+              <button className="link" onClick={() => follow(null)} title="Stop following">
+                ✕
+              </button>
+            </span>
+          )}
           <span className="head-tools">
             {myTable != null && myTable !== tableId && (
               <a className="btn primary small-btn" href={`#/t/${tournamentId}/table/${myTable}`}>
@@ -54,23 +80,48 @@ export function TablePage({ tournamentId, tableId }: { tournamentId: number; tab
             </button>
           </span>
         </div>
+        {view?.hostView && <div className="host-banner">👁 Host view: you can see every hand. Don't share what you see with players.</div>}
+        {view && !seated && user.isAdmin && stillPlaying && <div className="host-banner muted">Host view is off while you're playing in this tournament.</div>}
         {!view ? (
           <div className="center muted table-empty">
-            {summary?.me?.place === 1
-              ? "🏆 You won the tournament!"
-              : summary?.me?.waiting
-                ? `You won this table! You'll move to your round ${summary.me.waiting.round} table when the rest of your group finishes (${summary.me.waiting.groupDone}/${summary.me.waiting.groupSize} tables done).`
-                : summary?.status === "finished" || summary?.status === "cancelled"
-                  ? "This tournament is over."
-                  : "This table has finished (or is loading)."}
+            <p>
+              {summary?.me?.place === 1
+                ? "🏆 You won the tournament!"
+                : summary?.me?.waiting
+                  ? `You won this table! You'll move to your round ${summary.me.waiting.round} table when the rest of your group finishes (${summary.me.waiting.groupDone}/${summary.me.waiting.groupSize} tables done).`
+                  : summary?.status === "finished" || summary?.status === "cancelled"
+                    ? "This tournament is over."
+                    : following?.tableId === null
+                      ? `Waiting for ${following.username}'s next table (round ${following.round})…`
+                      : "This table has finished (or is loading)."}
+            </p>
+            {following?.tableId != null && following.tableId !== tableId && (
+              <a className="btn primary" href={`#/t/${tournamentId}/table/${following.tableId}`}>
+                Go to {following.username}'s table
+              </a>
+            )}
+            {summary?.status === "running" && detail && detail.tables.length > 0 && (
+              <>
+                <p className="small">Watch another table:</p>
+                <LiveTables t={summary} tables={detail.tables} except={tableId} />
+              </>
+            )}
           </div>
         ) : (
-          <Table view={view} sound={sound} />
+          <Table view={view} sound={sound} followingId={following?.userId ?? null} onFollow={canFollow ? follow : null} />
         )}
       </div>
       {chatOpen && (
         <aside className="chat-panel">
-          <TableChat tournamentId={tournamentId} tableId={tableId} messages={messages} canSend={Boolean(view)} onClose={() => setChatOpen(false)} />
+          <TableChat
+            tournamentId={tournamentId}
+            tableId={tableId}
+            messages={messages}
+            spectatorMessages={spectatorMessages}
+            seated={seated}
+            canSend={Boolean(view)}
+            onClose={() => setChatOpen(false)}
+          />
         </aside>
       )}
     </main>
@@ -137,7 +188,8 @@ function seatPosition(i: number, n: number) {
   return { left: 50 + 46 * Math.cos(angle), top: 50 + 42 * Math.sin(angle) };
 }
 
-function Table({ view, sound }: { view: TableView; sound: boolean }) {
+function Table(p: { view: TableView; sound: boolean; followingId: number | null; onFollow: ((userId: number | null) => void) | null }) {
+  const { view, sound } = p;
   const { send } = useGame();
   const me = view.mySeat !== null ? view.seats[view.mySeat]! : null;
   const myTurn = view.legal !== null;
@@ -159,7 +211,14 @@ function Table({ view, sound }: { view: TableView; sound: boolean }) {
             const pos = seatPosition((i - offset + n) % n, n);
             return (
               <div key={i} className="seat-slot" style={{ left: `${pos.left}%`, top: `${pos.top}%` }}>
-                <Seat s={s} view={view} canCatch={me !== null && s.catchable} onCatch={() => act({ type: "catch", seat: s.seat })} />
+                <Seat
+                  s={s}
+                  view={view}
+                  canCatch={me !== null && s.catchable}
+                  onCatch={() => act({ type: "catch", seat: s.seat })}
+                  followed={p.followingId === s.userId}
+                  onFollow={p.onFollow}
+                />
               </div>
             );
           })}
@@ -233,18 +292,37 @@ function WinPips({ wins, of }: { wins: number; of: number }) {
   );
 }
 
-function Seat({ s, view, canCatch, onCatch }: { s: SeatView; view: TableView; canCatch: boolean; onCatch: () => void }) {
+function Seat(p: {
+  s: SeatView;
+  view: TableView;
+  canCatch: boolean;
+  onCatch: () => void;
+  followed: boolean;
+  onFollow: ((userId: number | null) => void) | null;
+}) {
+  const { s, view, canCatch, onCatch, followed, onFollow } = p;
   const acting = view.toActSeat === s.seat;
   const winner = view.handWinnerSeat === s.seat;
   const backs = Math.min(s.cardCount, 8);
+  const fan = (i: number, n: number) => ({ transform: `rotate(${(i - (n - 1) / 2) * 9}deg) translateY(${Math.abs(i - (n - 1) / 2) * 2}px)` });
   return (
     <div className={`seat ${acting ? "acting" : ""} ${winner ? "winner" : ""} ${s.away ? "away" : ""}`}>
-      <div className="fan" aria-label={`${s.cardCount} cards`}>
-        {Array.from({ length: backs }, (_, i) => (
-          <CardBack key={i} size="xs" style={{ transform: `rotate(${(i - (backs - 1) / 2) * 9}deg) translateY(${Math.abs(i - (backs - 1) / 2) * 2}px)` }} />
-        ))}
-        {s.cardCount > 0 && <span className="count">{s.cardCount}</span>}
-      </div>
+      {s.hand ? (
+        // Host view: the real cards, face up.
+        <div className="fan face-up" aria-label={`${s.cardCount} cards`}>
+          {s.hand.map((c, i) => (
+            <UnoCard key={`${i}-${c}`} card={c} size="sm" style={fan(i, s.hand!.length)} />
+          ))}
+          {s.cardCount > 0 && <span className="count">{s.cardCount}</span>}
+        </div>
+      ) : (
+        <div className="fan" aria-label={`${s.cardCount} cards`}>
+          {Array.from({ length: backs }, (_, i) => (
+            <CardBack key={i} size="xs" style={fan(i, backs)} />
+          ))}
+          {s.cardCount > 0 && <span className="count">{s.cardCount}</span>}
+        </div>
+      )}
       <div className="plate">
         <span className="avatar-wrap">
           <img className="avatar" src={s.avatarUrl} alt="" width={36} height={36} />
@@ -264,6 +342,15 @@ function Seat({ s, view, canCatch, onCatch }: { s: SeatView; view: TableView; ca
       {!s.connected && <span className="tag">offline</span>}
       {s.connected && s.away && <span className="tag">away</span>}
       {s.handPoints !== null && <span className="tag points">+{s.handPoints} pts</span>}
+      {onFollow && (
+        <button
+          className={`follow-btn ${followed ? "on" : ""}`}
+          onClick={() => onFollow(followed ? null : s.userId)}
+          title={followed ? "Stop following" : `Follow ${s.username} to every table they play at`}
+        >
+          {followed ? "★ Following" : "☆ Follow"}
+        </button>
+      )}
     </div>
   );
 }

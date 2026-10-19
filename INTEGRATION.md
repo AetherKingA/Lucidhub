@@ -42,6 +42,9 @@ All JSON. Errors are `{"error": "<message for the admin>"}` with a 4xx status.
 | `POST /api/integration/events/:id/:op` | `op` is `start`, `pause`, `resume` or `cancel`. Returns the updated `GameEvent`. |
 | `GET /api/integration/events/:id/results` | `{ id, status, finishedAt, results: [{ discordId, username, place }] }`, sorted by place. |
 | `POST /api/integration/shutdown` | *Optional.* Save, answer `{ ok: true }`, then exit. Lets the hub stop a server it runs (Windows can't send Ctrl+C to a background process). Without it the hub force-stops the process. |
+| `GET /api/integration/events/:id/players` | *Optional (lobby controls).* `GameLobby`: `{ access, players: GamePlayer[] }`. A 404 hides the event's Lobby panel in the hub. |
+| `POST /api/integration/events/:id/access` | Body: `{ access: "open" \| "closed" }`. Closed: registering only asks to join. Opening lets in everyone waiting. Returns `GameLobby`. |
+| `POST /api/integration/events/:id/players/:discordId/:action` | `action` is `approve` or `deny` (a join request) or `kick` (removes the player for good: they're knocked out if it's running and can't register again). Returns `GameLobby`. |
 
 Types are in `src/shared/protocol.ts`:
 
@@ -49,8 +52,28 @@ Types are in `src/shared/protocol.ts`:
 GameField = { name, label, type: "text" | "number" | "datetime" | "select", default?, min?, max?,
               options?: { value, label }[], help? }        // datetime values are epoch ms
 GameEvent = { id: string, name, status: "registering" | "running" | "finished" | "cancelled",
-              startTime, entrants, maxPlayers, startedAt, finishedAt, url }
+              startTime, entrants, maxPlayers, startedAt, finishedAt, url,
+              access?: "open" | "closed", pending?: number,          // pending = join requests waiting
+              watchUrl?: string | null }
+GamePlayer = { discordId, username, avatarUrl,
+               status: "pending" | "registered" | "playing" | "waiting" | "out" | "removed" | "afk", place }
 ```
+
+`removed` means an admin kicked the player. `afk` means the game removed them for staying away too long (see below). The hub shows it as "Removed (AFK)", next to their place when they have one.
+
+`watchUrl` is optional: send it only while the event is running, pointing at the game's spectator page (games use `PUBLIC_URL/#/t/<id>/watch`). The hub then shows a "Watch live" link. Only `http(s)` links are kept, and leaving the field out clears it.
+
+To let the admin choose the lobby when creating an event, offer an `access` select field (`open` / `closed`) in `info`.
+
+### AFK kick (shared rule)
+
+Games where a player who doesn't act gets played for automatically (poker today; Uno should follow the same rule) offer one `number` field in `info`. Chess doesn't need it: its clock already ends the game.
+
+- **Field:** `afkKickMinutes`, min 0, max 60. 0 means never kick. Poker's default is 5.
+- **When the countdown runs:** while the player is marked away, because they timed out, were disconnected when their turn came, or chose to sit out. Acting again or pressing "I'm back" resets it. Paused time and break time don't count, and a game restart starts every countdown over, so nobody is removed for the server's downtime.
+- **When it runs out:** the player is removed the same way as an admin kick (folded out of a hand in progress first). They still get a finishing place and points, as if knocked out at that moment.
+- **Telling people:** the table chat says the player was removed for being away too long, the player sees a countdown while sitting out, and the lobby reports them with status `afk`.
+- **Older events** saved without the field: never kick, so events already running don't change.
 
 ## Webhook the game sends (game → hub)
 
@@ -61,8 +84,12 @@ POST {HUB_URL}/api/games/{key}/webhook
 {"type":"event.finished","externalId":"<event id>"}
 ```
 
-Fire and forget — no retries needed. The hub also polls every game every two minutes, so a missed
-webhook only delays prizes; it never loses them. The results route must already return the final
+Whenever an event's players change (someone registers, asks to join, is let in, knocked out or kicked),
+send `{"type":"event.updated","externalId":"<event id>"}` the same way, at most about once a second per
+event. The hub re-reads the game's events, so player counts on the dashboard stay live.
+
+Fire and forget — no retries needed. The hub also polls every game every two minutes (every 15 seconds
+while it has an event open or running), so a missed webhook only delays things; it never loses them. The results route must already return the final
 places when the webhook is sent.
 
 ## Letting the hub run the server

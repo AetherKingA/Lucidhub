@@ -9,7 +9,8 @@ import { DeliveryWorker, DmClosedError, type Messenger } from "../src/server/del
 import { getEvent, setRules, upsertEvent } from "../src/server/events.ts";
 import { addGame } from "../src/server/games.ts";
 import { ProcessManager } from "../src/server/processes.ts";
-import { addCodes, createPrize, getPrize, parseCodes } from "../src/server/prizes.ts";
+import { addCodes, createPrize, getPrize, listPrizes, parseCodes, updatePrize } from "../src/server/prizes.ts";
+import { prizeName } from "../src/shared/prizeKinds.ts";
 import { sign, verify } from "../src/server/signing.ts";
 import { syncGame } from "../src/server/sync.ts";
 
@@ -43,6 +44,20 @@ class FakeMessenger implements Messenger {
     this.posts.push({ channel, text });
   }
 }
+
+// ---------------------------------------------------------------- events
+
+describe("upsertEvent watchUrl", () => {
+  it("stores http(s) links, drops other schemes, and clears when the field is missing", () => {
+    const game = addGame({ key: `g${uid()}`, name: "Test game", baseUrl: "http://game.test" });
+    const base: GameEvent = { id: uid(), name: "Watched", status: "running", startTime: Date.now(), entrants: 4, maxPlayers: null, startedAt: null, finishedAt: null, url: null };
+    const url = "https://game.test/#/t/1/watch";
+    expect(upsertEvent(game.id, { ...base, watchUrl: url }).watchUrl).toBe(url);
+    expect(upsertEvent(game.id, { ...base, watchUrl: "javascript:alert(1)" }).watchUrl).toBeNull();
+    upsertEvent(game.id, { ...base, watchUrl: url });
+    expect(upsertEvent(game.id, base).watchUrl).toBeNull();
+  });
+});
 
 // ---------------------------------------------------------------- signing
 
@@ -150,6 +165,30 @@ describe("createAwards", () => {
     const msg = renderAward(listAwards({ eventId: ev.id })[0]!.id)!;
     expect(msg.text).toBe(`<@${did(1)}> got #1 in ${ev.name}: Steam key = XYZ`);
   });
+
+  it("gives each place its own Lucid prize: 1st a 50K account, 2nd a 25K account, 3rd Lupees", () => {
+    const { ev } = setupEvent();
+    const big = createPrize({ name: "", type: "code_pool", kind: "account", amount: 50_000 });
+    const small = createPrize({ name: "", type: "code_pool", kind: "account", amount: 25_000 });
+    const lupees = createPrize({ name: "", type: "code_pool", kind: "lupees", amount: 1_000 });
+    addCodes(big.id, ["ACC50-1", "ACC50-2"]);
+    addCodes(small.id, ["ACC25-1", "ACC25-2"]);
+    addCodes(lupees.id, ["LUP-1", "LUP-2"]);
+    setRules(ev.id, [
+      { placeFrom: 1, placeTo: 1, prizeId: big.id },
+      { placeFrom: 2, placeTo: 2, prizeId: small.id },
+      { placeFrom: 3, placeTo: 3, prizeId: lupees.id },
+    ]);
+    expect(createAwards(ev.id, results(5))).toEqual({ created: 3, waiting: 0, skipped: 0 });
+    const byPlace = new Map(listAwards({ eventId: ev.id }).map((a) => [a.place, renderAward(a.id)!]));
+    expect(byPlace.get(1)!.prizeName).toBe("50K Account");
+    expect(byPlace.get(1)!.text).toContain("ACC50-1");
+    expect(byPlace.get(2)!.prizeName).toBe("25K Account");
+    expect(byPlace.get(2)!.text).toContain("ACC25-1");
+    expect(byPlace.get(3)!.prizeName).toBe("1,000 Lupees");
+    expect(byPlace.get(3)!.text).toContain("LUP-1");
+    expect([big, small, lupees].map((p) => getPrize(p.id)!.stock)).toEqual([1, 1, 1]);
+  });
 });
 
 describe("prizes", () => {
@@ -158,6 +197,35 @@ describe("prizes", () => {
   });
   it("requires {code} in a code-pool message", () => {
     expect(() => createPrize({ name: "Bad", type: "code_pool", message: "no code here" })).toThrow(/\{code\}/);
+  });
+  it("names account and Lupees prizes from their amount, and always hands them out as codes", () => {
+    const acc = createPrize({ name: " ", type: "message", kind: "account", amount: 50_000 });
+    expect(acc).toMatchObject({ name: "50K Account", type: "code_pool", kind: "account", amount: 50_000 });
+    expect(acc.message).toContain("{code}");
+    expect(createPrize({ name: "", type: "code_pool", kind: "lupees", amount: 1_000 }).name).toBe("1,000 Lupees");
+    expect(createPrize({ name: "Grand prize", type: "code_pool", kind: "account", amount: 100_000 }).name).toBe("Grand prize");
+    expect([prizeName("account", 2_500), prizeName("account", 1_500_000), prizeName("lupees", 1)]).toEqual(["2.5K Account", "1.5M Account", "1 Lupee"]);
+  });
+  it("needs an amount for accounts and Lupees, and keeps a prize's kind fixed", () => {
+    expect(() => createPrize({ name: "", type: "code_pool", kind: "account" })).toThrow(/account size/);
+    expect(() => createPrize({ name: "", type: "code_pool", kind: "lupees", amount: 0 })).toThrow(/Lupees/);
+    expect(() => createPrize({ name: "", type: "code_pool", kind: "lupees", amount: 2.5 })).toThrow(/Lupees/);
+    const acc = createPrize({ name: "", type: "code_pool", kind: "account", amount: 10_000 });
+    const edited = updatePrize(acc.id, { kind: "custom", amount: 15_000, name: "15K Account" });
+    expect(edited).toMatchObject({ kind: "account", amount: 15_000, name: "15K Account" });
+    const old = createPrize({ name: "Steam key", type: "code_pool" });
+    expect(old).toMatchObject({ kind: "custom", amount: null });
+  });
+  it("lists accounts first, then Lupees, then other prizes, biggest first", () => {
+    const made = [
+      createPrize({ name: "Zz sticker", type: "message" }),
+      createPrize({ name: "", type: "code_pool", kind: "lupees", amount: 500 }),
+      createPrize({ name: "", type: "code_pool", kind: "account", amount: 25_000 }),
+      createPrize({ name: "", type: "code_pool", kind: "lupees", amount: 5_000 }),
+      createPrize({ name: "", type: "code_pool", kind: "account", amount: 200_000 }),
+    ].map((p) => p.id);
+    const order = listPrizes().filter((p) => made.includes(p.id)).map((p) => p.name);
+    expect(order).toEqual(["200K Account", "25K Account", "5,000 Lupees", "500 Lupees", "Zz sticker"]);
   });
 });
 
@@ -326,6 +394,14 @@ describe("HTTP API", () => {
     expect(res.json().error).toMatch(/name/);
   });
 
+  it("creates a Lucid account prize with its codes", async () => {
+    const admin = startSession({ discordId: "100", username: "Admin", avatar: null });
+    const payload = { name: "", type: "code_pool", kind: "account", amount: 50_000, codes: "A50-1\nA50-2" };
+    const res = await app.inject({ method: "POST", url: "/api/prizes", cookies: { hub_sid: admin.token }, payload });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ name: "50K Account", kind: "account", amount: 50_000, stock: 2 });
+  });
+
   it("offers the games in games/ to the Connect a game picker", async () => {
     expect((await app.inject({ url: "/api/games/known" })).statusCode).toBe(401);
     const admin = startSession({ discordId: "100", username: "Admin", avatar: null });
@@ -357,5 +433,38 @@ describe("HTTP API", () => {
 
     await call("DELETE", `/api/blind-presets/${list[0].id.replace("saved-", "")}`);
     expect((await call("GET", `/api/games/${game.id}/blind-presets`)).json()).toEqual([]);
+  });
+
+  it("mirrors a closed lobby and passes approvals, kicks and opening it to the game", async () => {
+    const game = addGame({ key: `lobby${uid()}`, name: "Lobby game", baseUrl: "http://lobby.test", secret: "lsec" });
+    const ev: GameEvent = { id: "5", name: "Invite only", status: "registering", startTime: Date.now(), entrants: 0, maxPlayers: 8, startedAt: null, finishedAt: null, url: null, access: "closed", pending: 1 };
+    const lobby = { access: "closed", players: [{ discordId: did(1), username: "Ann", avatarUrl: "", status: "pending", place: null }] };
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const u = new URL(String(url));
+        const headers = init?.headers as Record<string, string>;
+        const body = typeof init?.body === "string" ? init.body : "";
+        if (!verify("lsec", body, headers["X-Hub-Timestamp"], headers["X-Hub-Signature"])) return new Response("{}", { status: 401 });
+        calls.push(`${init?.method} ${u.pathname} ${body}`);
+        return Response.json(u.pathname === "/api/integration/events" ? [ev] : lobby);
+      }),
+    );
+    await syncGame(game);
+    const { id } = db.prepare(`SELECT id FROM events WHERE game_id = ? AND external_id = '5'`).get(game.id) as { id: number };
+    expect(getEvent(id)).toMatchObject({ access: "closed", pending: 1 });
+
+    const admin = startSession({ discordId: "100", username: "Admin", avatar: null });
+    const call = (method: "GET" | "POST" | "PUT", url: string, payload?: object) => app.inject({ method, url, payload, cookies: { hub_sid: admin.token } });
+    expect((await call("GET", `/api/events/${id}/players`)).json()).toEqual({ ...lobby, locations: false });
+    expect((await call("POST", `/api/events/${id}/players/${did(1)}/approve`, {})).statusCode).toBe(200);
+    expect((await call("POST", `/api/events/${id}/players/${did(1)}/kick`, {})).statusCode).toBe(200);
+    expect((await call("PUT", `/api/events/${id}/access`, { access: "open" })).statusCode).toBe(200);
+    expect(calls).toContain(`POST /api/integration/events/5/players/${did(1)}/approve {}`);
+    expect(calls).toContain(`POST /api/integration/events/5/players/${did(1)}/kick {}`);
+    expect(calls).toContain(`POST /api/integration/events/5/access {"access":"open"}`);
+    expect((await call("POST", `/api/events/${id}/players/${did(1)}/ban`, {})).statusCode).toBe(404);
+    expect((await call("PUT", `/api/events/${id}/access`, { access: "ajar" })).statusCode).toBe(400);
   });
 });

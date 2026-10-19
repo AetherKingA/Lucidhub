@@ -1,14 +1,25 @@
 import type { FastifyInstance } from "fastify";
-import type { WebSocket } from "ws";
-import type { Action, ChatMessage, ClientMessage, ServerMessage } from "../shared/protocol.ts";
+import type { Action, ChatChannel, ChatMessage, ClientMessage, FollowInfo, ServerMessage, TableView } from "../shared/protocol.ts";
 import { type PublicUser, publicUser, userFromRequest } from "./auth.ts";
-import { ChatError, TableChats } from "./chat.ts";
+import { ChatError, TableChats, chatRights, defaultChannel } from "./chat.ts";
 import { recordIp } from "./db.ts";
+import { FollowBook, autoFollowers } from "./follow.ts";
 import type { Notifier, TournamentManager } from "./tournament/manager.ts";
-import { TournamentError } from "./tournament/tournament.ts";
+import { type Tournament, TournamentError } from "./tournament/tournament.ts";
+
+/** The parts of a WebSocket this uses (tests pass a fake). */
+export interface SocketLike {
+  readonly readyState: number;
+  readonly OPEN: number;
+  send(data: string): void;
+  on(event: string, listener: (...args: any[]) => void): unknown;
+  ping(): void;
+  terminate(): void;
+  close(code?: number, reason?: string): void;
+}
 
 interface Client {
-  socket: WebSocket;
+  socket: SocketLike;
   user: PublicUser;
   alive: boolean;
   /** Table keys ("tournamentId:tableId") this client receives updates for. */
@@ -21,11 +32,29 @@ interface Client {
 
 const key = (tournamentId: number, tableId: number) => `${tournamentId}:${tableId}`;
 const LOBBY_THROTTLE_MS = 1000;
+const VIEWERS_THROTTLE_MS = 3000;
 const MAX_MESSAGES_PER_SECOND = 20;
+
+/** People watching a table who aren't seated at it, counting each person once however many tabs they have open. */
+export function countViewers(watchers: Iterable<{ user: { id: number } }>, seated: Set<number>): number {
+  const ids = new Set<number>();
+  for (const w of watchers) if (!seated.has(w.user.id)) ids.add(w.user.id);
+  return ids.size;
+}
+
+const seatedAt = (t: Tournament, tableId: number) =>
+  new Set(t.tables.get(tableId)?.seats.flatMap((s) => (s ? [s.userId] : [])) ?? []);
+
+function ordinal(n: number) {
+  const s = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]!);
+}
 
 /**
  * WebSocket hub. Sends the lobby to everyone, and table updates to the players seated at that table
- * (each with only their own hole cards) plus any spectators.
+ * (each with only their own hole cards) plus any spectators: hidden cards for everyone, except admins
+ * who aren't playing, who see every hand (host view).
  */
 export class Realtime implements Notifier {
   manager!: TournamentManager;
@@ -36,7 +65,11 @@ export class Realtime implements Notifier {
   private flushQueued = false;
   private lobbyTimer: ReturnType<typeof setTimeout> | null = null;
   private lastLobby = 0;
+  private viewersDirty = new Set<string>();
+  private viewersTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastViewers = new Map<string, number>();
   readonly chats = new TableChats();
+  readonly follows = new FollowBook();
 
   // ------------------------------------------------------------ Notifier
 
@@ -44,7 +77,11 @@ export class Realtime implements Notifier {
     const k = key(tournamentId, tableId);
     const now = Date.now();
     const messages = lines.map((l) => this.chats.dealer(k, l, now));
-    if (messages.length) this.sendChat(k, tournamentId, tableId, messages);
+    if (messages.length) this.sendChat(k, tournamentId, tableId, "table", messages);
+  }
+
+  tableNotice(tournamentId: number, tableId: number, line: string) {
+    this.handComplete(tournamentId, tableId, [line]);
   }
 
   isConnected(userId: number) {
@@ -59,16 +96,38 @@ export class Realtime implements Notifier {
     }
   }
 
-  tableClosed(tournamentId: number, tableId: number) {
+  tableClosed(tournamentId: number, tableId: number, winnerId: number | null) {
     const k = key(tournamentId, tableId);
+    const watcherIds = new Set<number>();
     for (const c of this.watchers.get(k) ?? []) {
+      watcherIds.add(c.user.id);
       c.subs.delete(k);
       if (c.spectating === k) c.spectating = null;
       this.send(c, { type: "tableClosed", tournamentId, tableId });
     }
     this.watchers.delete(k);
     this.dirtyTables.delete(k);
+    this.viewersDirty.delete(k);
+    this.lastViewers.delete(k);
     this.chats.drop(k);
+
+    const t = this.manager.get(tournamentId);
+    if (!t || t.meta.status !== "running") {
+      for (const f of this.follows.dropTournament(tournamentId)) this.sendFollow(f, tournamentId, "The tournament is over.");
+      return;
+    }
+    // People who were watching follow the winner on to their next table.
+    const auto = autoFollowers(watcherIds, winnerId, (id) => t.isStillPlaying(id), (id) => this.follows.target(tournamentId, id) !== null);
+    for (const f of auto) {
+      this.follows.follow(tournamentId, f, winnerId!);
+      this.sendFollow(f, tournamentId, `This table is over. Now following the winner, ${this.nameOf(t, winnerId!)}.`);
+    }
+  }
+
+  viewerCount(tournamentId: number, tableId: number) {
+    const t = this.manager.get(tournamentId);
+    if (!t?.tables.has(tableId)) return 0;
+    return countViewers(this.watchers.get(key(tournamentId, tableId)) ?? [], seatedAt(t, tableId));
   }
 
   lobbyChanged() {
@@ -82,22 +141,48 @@ export class Realtime implements Notifier {
   }
 
   playerMoved(tournamentId: number, userId: number, tableId: number) {
+    const k = key(tournamentId, tableId);
     for (const c of this.byUser.get(userId) ?? []) {
       // Drop the old own-table subscription for this tournament.
-      for (const k of [...c.subs]) if (k.startsWith(`${tournamentId}:`) && k !== c.spectating) this.unsubscribe(c, k);
-      this.subscribe(c, key(tournamentId, tableId));
+      for (const old of [...c.subs]) if (old.startsWith(`${tournamentId}:`) && old !== c.spectating) this.unsubscribe(c, old);
+      if (c.spectating === k) c.spectating = null;
+      this.subscribe(c, k);
       this.send(c, { type: "moved", tournamentId, tableId });
     }
     this.tableChanged(tournamentId, tableId);
+    // Sitting down always wins over following someone.
+    if (this.follows.unfollow(tournamentId, userId) !== null) this.sendFollow(userId, tournamentId, null);
+    const t = this.manager.get(tournamentId);
+    if (!t) return;
+    for (const f of this.follows.followers(tournamentId, userId)) this.sendFollow(f, tournamentId, `${this.nameOf(t, userId)} moved to table ${tableId}.`);
   }
 
   playerAdvanced(tournamentId: number, userId: number, round: number, totalRounds: number) {
     for (const c of this.byUser.get(userId) ?? []) this.send(c, { type: "advanced", tournamentId, round, totalRounds });
     this.lobbyChanged();
+    const t = this.manager.get(tournamentId);
+    if (!t) return;
+    const where = round === totalRounds ? "the final table" : `their round ${round} table`;
+    for (const f of this.follows.followers(tournamentId, userId))
+      this.sendFollow(f, tournamentId, `${this.nameOf(t, userId)} won their table. Waiting for ${where} to start.`);
   }
 
   playerFinished(tournamentId: number, userId: number, place: number, points: number) {
-    for (const c of this.byUser.get(userId) ?? []) this.send(c, { type: "finished", tournamentId, place, points });
+    const t = this.manager.get(tournamentId);
+    for (const c of this.byUser.get(userId) ?? []) {
+      this.send(c, { type: "finished", tournamentId, place, points });
+      // Still looking at the table they were knocked out at: they're a spectator there now.
+      for (const k of c.subs) {
+        const [tid, tableId] = k.split(":").map(Number) as [number, number];
+        if (tid !== tournamentId || !t?.tables.has(tableId)) continue;
+        this.send(c, { type: "chat", tournamentId, tableId, channel: "spectators", messages: this.chats.history(k, "spectators"), replace: true });
+        this.markViewers(k);
+      }
+    }
+    if (!t) return;
+    const name = this.nameOf(t, userId);
+    for (const f of this.follows.release(tournamentId, userId))
+      this.sendFollow(f, tournamentId, place === 1 ? `🏆 ${name} won the tournament!` : `${name} was knocked out (${ordinal(place)}). You're no longer following anyone.`);
   }
 
   // ------------------------------------------------------------ connections
@@ -110,28 +195,7 @@ export class Realtime implements Notifier {
         return;
       }
       recordIp(user.id, req.ip);
-
-      const client: Client = { socket, user: publicUser(user), alive: true, subs: new Set(), spectating: null, budget: MAX_MESSAGES_PER_SECOND };
-      this.clients.add(client);
-      const wasConnected = this.isConnected(user.id);
-      if (!this.byUser.has(user.id)) this.byUser.set(user.id, new Set());
-      this.byUser.get(user.id)!.add(client);
-
-      this.send(client, { type: "hello", user: client.user, online: this.byUser.size, serverNow: Date.now() });
-      this.sendLobby(client);
-      // Subscribe to the player's own tables.
-      for (const t of this.manager.tournaments.values()) {
-        const loc = t.locate(user.id);
-        if (loc) {
-          this.subscribe(client, key(t.id, loc.table.id));
-          this.tableChanged(t.id, loc.table.id); // also refreshes their "connected" dot for others
-        }
-      }
-      if (!wasConnected) this.broadcast({ type: "online", count: this.byUser.size });
-
-      socket.on("pong", () => (client.alive = true));
-      socket.on("message", (raw) => this.onMessage(client, String(raw)));
-      socket.on("close", () => this.onClose(client));
+      this.connect(socket, publicUser(user));
     });
 
     // Drop connections that stopped answering, and refill rate-limit budgets.
@@ -151,13 +215,45 @@ export class Realtime implements Notifier {
     app.addHook("onClose", async () => {
       clearInterval(heartbeat);
       clearInterval(budgets);
+      if (this.viewersTimer) clearTimeout(this.viewersTimer);
       for (const c of this.clients) c.socket.close(1001, "Server shutting down");
     });
   }
 
+  /** A signed-in user's socket is ready. */
+  connect(socket: SocketLike, user: PublicUser) {
+    const client: Client = { socket, user, alive: true, subs: new Set(), spectating: null, budget: MAX_MESSAGES_PER_SECOND };
+    this.clients.add(client);
+    const wasConnected = this.isConnected(user.id);
+    if (!this.byUser.has(user.id)) this.byUser.set(user.id, new Set());
+    this.byUser.get(user.id)!.add(client);
+
+    this.send(client, { type: "hello", user: client.user, online: this.byUser.size, serverNow: Date.now() });
+    this.sendLobby(client);
+    // Subscribe to the player's own tables.
+    for (const t of this.manager.tournaments.values()) {
+      const loc = t.locate(user.id);
+      if (loc) {
+        this.subscribe(client, key(t.id, loc.table.id));
+        this.tableChanged(t.id, loc.table.id); // also refreshes their "connected" dot for others
+      }
+    }
+    // Who they're following, if anyone.
+    for (const { tournamentId } of this.follows.forUser(user.id)) this.send(client, this.followMessage(user.id, tournamentId, null));
+    if (!wasConnected) this.broadcast({ type: "online", count: this.byUser.size });
+
+    socket.on("pong", () => (client.alive = true));
+    socket.on("message", (raw) => this.onMessage(client, String(raw)));
+    socket.on("close", () => this.onClose(client));
+    return client;
+  }
+
   private onClose(client: Client) {
     this.clients.delete(client);
-    for (const k of client.subs) this.watchers.get(k)?.delete(client);
+    for (const k of client.subs) {
+      this.watchers.get(k)?.delete(client);
+      this.markViewers(k);
+    }
     const mine = this.byUser.get(client.user.id);
     mine?.delete(client);
     if (mine && mine.size === 0) {
@@ -199,14 +295,16 @@ export class Realtime implements Notifier {
           t.unregister(userId);
           break;
         case "watch": {
-          if (client.spectating) this.unsubscribe(client, client.spectating);
-          client.spectating = null;
-          if (msg.tableId !== null && t.tables.has(Number(msg.tableId))) {
-            const k = key(t.id, Number(msg.tableId));
-            const own = t.locate(userId)?.table.id === Number(msg.tableId);
-            if (!own) client.spectating = k;
-            this.subscribe(client, k);
-            this.sendTable(client, t.id, Number(msg.tableId), now);
+          const tableId = msg.tableId === null ? null : Number(msg.tableId);
+          const target = tableId !== null && t.tables.has(tableId) ? key(t.id, tableId) : null;
+          const ownTable = t.locate(userId)?.table.id;
+          const own = ownTable === undefined ? null : key(t.id, ownTable);
+          // Only the table being looked at and the player's own seat (tables they were knocked out at linger otherwise).
+          for (const k of [...client.subs]) if (k.startsWith(`${t.id}:`) && k !== target && k !== own) this.unsubscribe(client, k);
+          client.spectating = target !== null && target !== own ? target : null;
+          if (target !== null) {
+            this.subscribe(client, target);
+            this.sendTable(client, t, tableId!, now);
           }
           break;
         }
@@ -214,19 +312,34 @@ export class Realtime implements Notifier {
           t.act(userId, parseAction(msg.action), now);
           break;
         case "back":
-          t.setAway(userId, false);
+          t.setAway(userId, false, now);
           break;
         case "sitOut":
-          t.setAway(userId, true);
+          t.setAway(userId, true, now);
           break;
         case "chat": {
           // Only at a table you're sitting at or watching.
           const tableId = Number(msg.tableId);
           const k = key(t.id, tableId);
           if (!client.subs.has(k) || !t.tables.has(tableId)) throw new TournamentError("Open the table to chat there");
-          const seated = t.locate(userId)?.table.id === tableId;
-          const m = this.chats.say(k, { ...client.user, userId, seated }, msg.text, now);
-          this.sendChat(k, t.id, tableId, [m]);
+          const person = { seated: t.locate(userId)?.table.id === tableId, isAdmin: client.user.isAdmin };
+          const channel: ChatChannel = msg.channel === "table" || msg.channel === "spectators" ? msg.channel : defaultChannel(person);
+          const m = this.chats.say(k, channel, { ...client.user, userId, seated: person.seated }, msg.text, now);
+          this.sendChat(k, t.id, tableId, channel, [m]);
+          break;
+        }
+        case "follow": {
+          if (msg.userId === null) {
+            this.follows.unfollow(t.id, userId);
+            this.sendFollow(userId, t.id, null);
+            break;
+          }
+          const target = Number(msg.userId);
+          if (t.meta.status !== "running") throw new TournamentError("You can follow players while the tournament is running");
+          if (t.isStillPlaying(userId)) throw new TournamentError("You can't follow anyone while you're still playing");
+          if (target === userId || !t.isStillPlaying(target)) throw new TournamentError("That player is out of the tournament");
+          this.follows.follow(t.id, userId, target);
+          this.sendFollow(userId, t.id, `Following ${this.nameOf(t, target)}. You'll go to each table they play at.`);
           break;
         }
       }
@@ -246,21 +359,66 @@ export class Realtime implements Notifier {
     c.subs.add(k);
     if (!this.watchers.has(k)) this.watchers.set(k, new Set());
     this.watchers.get(k)!.add(c);
-    // Catch up on the table's recent chat.
-    if (isNew) {
-      const [tournamentId, tableId] = k.split(":").map(Number) as [number, number];
-      this.send(c, { type: "chat", tournamentId, tableId, messages: this.chats.history(k), replace: true });
-    }
-  }
-
-  private sendChat(k: string, tournamentId: number, tableId: number, messages: ChatMessage[]) {
-    const data = JSON.stringify({ type: "chat", tournamentId, tableId, messages, replace: false } satisfies ServerMessage);
-    for (const c of this.watchers.get(k) ?? []) this.sendRaw(c, data);
+    if (!isNew) return;
+    const [tournamentId, tableId] = k.split(":").map(Number) as [number, number];
+    // Catch up on the table's recent chat: the spectator chat too, unless they're playing here.
+    this.send(c, { type: "chat", tournamentId, tableId, channel: "table", messages: this.chats.history(k, "table"), replace: true });
+    const t = this.manager.get(tournamentId);
+    const seated = t ? seatedAt(t, tableId).has(c.user.id) : false;
+    if (!seated) this.send(c, { type: "chat", tournamentId, tableId, channel: "spectators", messages: this.chats.history(k, "spectators"), replace: true });
+    this.send(c, { type: "viewers", tournamentId, tableId, count: this.viewerCount(tournamentId, tableId) });
+    this.markViewers(k);
   }
 
   private unsubscribe(c: Client, k: string) {
     c.subs.delete(k);
     this.watchers.get(k)?.delete(c);
+    this.markViewers(k);
+  }
+
+  /** Sends chat messages to the watchers allowed to read that channel (never spectator chat to seated players). */
+  private sendChat(k: string, tournamentId: number, tableId: number, channel: ChatChannel, messages: ChatMessage[]) {
+    const t = this.manager.get(tournamentId);
+    const seated = t ? seatedAt(t, tableId) : new Set<number>();
+    const data = JSON.stringify({ type: "chat", tournamentId, tableId, channel, messages, replace: false } satisfies ServerMessage);
+    for (const c of this.watchers.get(k) ?? [])
+      if (chatRights({ seated: seated.has(c.user.id), isAdmin: c.user.isAdmin }).read.includes(channel)) this.sendRaw(c, data);
+  }
+
+  /** A table's viewer count changed (maybe): send it within a few seconds, if it really did. */
+  private markViewers(k: string) {
+    this.viewersDirty.add(k);
+    if (this.viewersTimer) return;
+    this.viewersTimer = setTimeout(() => this.flushViewers(), VIEWERS_THROTTLE_MS);
+  }
+
+  private flushViewers() {
+    this.viewersTimer = null;
+    for (const k of this.viewersDirty) {
+      const [tournamentId, tableId] = k.split(":").map(Number) as [number, number];
+      const count = this.viewerCount(tournamentId, tableId);
+      if (this.lastViewers.get(k) === count) continue;
+      this.lastViewers.set(k, count);
+      const data = JSON.stringify({ type: "viewers", tournamentId, tableId, count } satisfies ServerMessage);
+      for (const c of this.watchers.get(k) ?? []) this.sendRaw(c, data);
+    }
+    this.viewersDirty.clear();
+  }
+
+  /**
+   * The one place that decides what a person sees of a table: their own cards if seated there, every
+   * hand if they're an admin who isn't playing, otherwise no hidden cards at all.
+   */
+  private viewKind(c: Client, t: Tournament, seated: Set<number>): "own" | "host" | "spectator" {
+    if (seated.has(c.user.id)) return "own";
+    if (t.canSeeAllCards(c.user)) return "host";
+    return "spectator";
+  }
+
+  private viewFor(kind: "own" | "host" | "spectator", c: Client, t: Tournament, tableId: number, now: number): TableView | null {
+    if (kind === "own") return t.tableView(tableId, c.user.id, now);
+    if (kind === "host") return t.hostView(tableId, c.user, now);
+    return t.tableView(tableId, null, now);
   }
 
   private flushTables() {
@@ -270,17 +428,21 @@ export class Realtime implements Notifier {
       const [tid, tableId] = k.split(":").map(Number) as [number, number];
       const t = this.manager.get(tid);
       const watchers = this.watchers.get(k);
-      if (!t || !watchers?.size) continue;
-      const table = t.tables.get(tableId);
-      if (!table) continue;
-      const seated = new Set(table.seats.flatMap((s) => (s ? [s.userId] : [])));
+      if (!t || !watchers?.size || !t.tables.has(tableId)) continue;
+      const seated = seatedAt(t, tableId);
+      // Shared views are built once per table. Kept apart so the host view can never go to a spectator.
       let spectatorJson: string | null = null;
+      let hostJson: string | null = null;
       for (const c of watchers) {
-        if (seated.has(c.user.id)) {
-          const view = t.tableView(tableId, c.user.id, now);
+        const kind = this.viewKind(c, t, seated);
+        if (kind === "own") {
+          const view = this.viewFor("own", c, t, tableId, now);
           if (view) this.send(c, { type: "table", view });
+        } else if (kind === "host") {
+          hostJson ??= JSON.stringify({ type: "table", view: this.viewFor("host", c, t, tableId, now) });
+          this.sendRaw(c, hostJson);
         } else {
-          spectatorJson ??= JSON.stringify({ type: "table", view: t.tableView(tableId, null, now) });
+          spectatorJson ??= JSON.stringify({ type: "table", view: this.viewFor("spectator", c, t, tableId, now) });
           this.sendRaw(c, spectatorJson);
         }
       }
@@ -288,9 +450,29 @@ export class Realtime implements Notifier {
     this.dirtyTables.clear();
   }
 
-  private sendTable(c: Client, tournamentId: number, tableId: number, now: number) {
-    const view = this.manager.get(tournamentId)?.tableView(tableId, c.user.id, now);
+  private sendTable(c: Client, t: Tournament, tableId: number, now: number) {
+    const view = this.viewFor(this.viewKind(c, t, seatedAt(t, tableId)), c, t, tableId, now);
     if (view) this.send(c, { type: "table", view });
+  }
+
+  private nameOf(t: Tournament, userId: number) {
+    return t.meta.entrants[userId]?.username ?? "That player";
+  }
+
+  private followMessage(userId: number, tournamentId: number, notice: string | null): ServerMessage {
+    const t = this.manager.get(tournamentId);
+    const target = this.follows.target(tournamentId, userId);
+    const e = target === null ? undefined : t?.meta.entrants[target];
+    const following: FollowInfo | null =
+      t && e ? { userId: e.userId, username: e.username, tableId: t.locate(e.userId)?.table.id ?? null, round: e.round } : null;
+    return { type: "follow", tournamentId, following, notice };
+  }
+
+  private sendFollow(userId: number, tournamentId: number, notice: string | null) {
+    const clients = this.byUser.get(userId);
+    if (!clients?.size) return;
+    const data = JSON.stringify(this.followMessage(userId, tournamentId, notice));
+    for (const c of clients) this.sendRaw(c, data);
   }
 
   private sendLobby(c: Client) {

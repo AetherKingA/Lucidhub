@@ -15,6 +15,9 @@ type EventDbRow = {
   entrants: number;
   max_players: number | null;
   url: string | null;
+  access: HubEvent["access"];
+  pending: number;
+  watch_url: string | null;
   announce_channel_id: string | null;
   processed_at: number | null;
 };
@@ -47,6 +50,9 @@ function toEvent(r: EventDbRow): HubEvent {
     entrants: r.entrants,
     maxPlayers: r.max_players,
     url: r.url,
+    access: r.access,
+    pending: r.pending,
+    watchUrl: r.watch_url,
     announceChannelId: r.announce_channel_id,
     processedAt: r.processed_at,
     rules: rulesFor(r.id),
@@ -74,16 +80,20 @@ export function findEvent(gameId: number, externalId: string): HubEvent | null {
 /** Inserts or refreshes an event from what the game reports. Events made on the game site itself show up this way too. */
 export function upsertEvent(gameId: number, e: GameEvent): HubEvent {
   const now = Date.now();
+  // Only http(s) links, so a bad value can't become a javascript: link in the dashboard. A missing field clears it.
+  const watchUrl = typeof e.watchUrl === "string" && /^https?:\/\//i.test(e.watchUrl) ? e.watchUrl.slice(0, 500) : null;
   const { id } = db
     .prepare(
-      `INSERT INTO events (game_id, external_id, name, status, start_time, entrants, max_players, url, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO events (game_id, external_id, name, status, start_time, entrants, max_players, url, access, pending, watch_url, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(game_id, external_id) DO UPDATE SET
          name = excluded.name, status = excluded.status, start_time = excluded.start_time, entrants = excluded.entrants,
-         max_players = excluded.max_players, url = excluded.url, updated_at = excluded.updated_at
+         max_players = excluded.max_players, url = excluded.url, access = excluded.access, pending = excluded.pending,
+         watch_url = excluded.watch_url, updated_at = excluded.updated_at
        RETURNING id`,
     )
-    .get(gameId, String(e.id), String(e.name).slice(0, 100), e.status, e.startTime ?? null, Number(e.entrants) || 0, e.maxPlayers ?? null, e.url ?? null, now, now) as {
+    .get(gameId, String(e.id), String(e.name).slice(0, 100), e.status, e.startTime ?? null, Number(e.entrants) || 0, e.maxPlayers ?? null, e.url ?? null,
+      e.access === "open" || e.access === "closed" ? e.access : null, Number(e.pending) || 0, watchUrl, now, now) as {
     id: number;
   };
   return getEvent(id)!;
