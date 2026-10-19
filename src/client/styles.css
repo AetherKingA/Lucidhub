@@ -171,6 +171,8 @@ label.inline input { width: 72px; }
 .ladder-row select { width: auto; flex: 1 1 220px; }
 .place-tag { min-width: 58px; text-align: center; font-weight: 700; font-family: var(--font-display); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 8px; padding: 3px 8px; }
 .ladder .row select { width: auto; }
+button.place-tag { border: 0; cursor: pointer; font-size: inherit; line-height: inherit; }
+button.place-tag:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 
 .dm-preview { margin-top: 16px; }
 .embed { margin-top: 6px; background: #2b2d31; border-left: 4px solid var(--accent-text); border-radius: 4px; padding: 10px 14px; max-width: 520px; }

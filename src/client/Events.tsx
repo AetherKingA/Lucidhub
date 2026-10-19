@@ -82,10 +82,18 @@ export function EventsPage() {
 }
 
 function PrizeSummary({ e }: { e: HubEvent }) {
+  const { prizes } = useHub();
   const sent = (e.awardCounts.sent ?? 0) + (e.awardCounts.manual ?? 0);
   const total = Object.entries(e.awardCounts).reduce((n, [k, v]) => (k === "cancelled" ? n : n + v), 0);
   if (total) return <span className={sent === total ? "ok" : "warn"}>{sent}/{total} delivered</span>;
-  return <span className="muted">{e.rules.length} rule{e.rules.length === 1 ? "" : "s"}</span>;
+  const shown = e.rules.slice(0, 3).map((r) => `${placeLabel(r.placeFrom, r.placeTo)}: ${prizes.find((p) => p.id === r.prizeId)?.name ?? "?"}`);
+  const more = e.rules.length - shown.length;
+  return (
+    <span className="muted">
+      {shown.join(" · ")}
+      {more > 0 && ` · +${more} more`}
+    </span>
+  );
 }
 
 // ---------------------------------------------------------------- create
