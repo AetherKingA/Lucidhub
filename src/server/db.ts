@@ -154,6 +154,9 @@ addColumn("games", "funnel_port", "INTEGER NOT NULL DEFAULT 443");
 // Open or closed lobby, and how many players are waiting to be let in (games that support it).
 addColumn("events", "access", "TEXT");
 addColumn("events", "pending", "INTEGER NOT NULL DEFAULT 0");
+// What a prize is (a Lucid account, Lupees or anything else), and the account size or number of Lupees.
+addColumn("prizes", "kind", "TEXT NOT NULL DEFAULT 'custom'");
+addColumn("prizes", "amount", "INTEGER");
 
 /** Runs fn in a transaction; rolls back if it throws. */
 export function tx<T>(fn: () => T): T {

@@ -9,7 +9,8 @@ import { DeliveryWorker, DmClosedError, type Messenger } from "../src/server/del
 import { getEvent, setRules, upsertEvent } from "../src/server/events.ts";
 import { addGame } from "../src/server/games.ts";
 import { ProcessManager } from "../src/server/processes.ts";
-import { addCodes, createPrize, getPrize, parseCodes } from "../src/server/prizes.ts";
+import { addCodes, createPrize, getPrize, listPrizes, parseCodes, updatePrize } from "../src/server/prizes.ts";
+import { prizeName } from "../src/shared/prizeKinds.ts";
 import { sign, verify } from "../src/server/signing.ts";
 import { syncGame } from "../src/server/sync.ts";
 
@@ -150,6 +151,30 @@ describe("createAwards", () => {
     const msg = renderAward(listAwards({ eventId: ev.id })[0]!.id)!;
     expect(msg.text).toBe(`<@${did(1)}> got #1 in ${ev.name}: Steam key = XYZ`);
   });
+
+  it("gives each place its own Lucid prize: 1st a 50K account, 2nd a 25K account, 3rd Lupees", () => {
+    const { ev } = setupEvent();
+    const big = createPrize({ name: "", type: "code_pool", kind: "account", amount: 50_000 });
+    const small = createPrize({ name: "", type: "code_pool", kind: "account", amount: 25_000 });
+    const lupees = createPrize({ name: "", type: "code_pool", kind: "lupees", amount: 1_000 });
+    addCodes(big.id, ["ACC50-1", "ACC50-2"]);
+    addCodes(small.id, ["ACC25-1", "ACC25-2"]);
+    addCodes(lupees.id, ["LUP-1", "LUP-2"]);
+    setRules(ev.id, [
+      { placeFrom: 1, placeTo: 1, prizeId: big.id },
+      { placeFrom: 2, placeTo: 2, prizeId: small.id },
+      { placeFrom: 3, placeTo: 3, prizeId: lupees.id },
+    ]);
+    expect(createAwards(ev.id, results(5))).toEqual({ created: 3, waiting: 0, skipped: 0 });
+    const byPlace = new Map(listAwards({ eventId: ev.id }).map((a) => [a.place, renderAward(a.id)!]));
+    expect(byPlace.get(1)!.prizeName).toBe("50K Account");
+    expect(byPlace.get(1)!.text).toContain("ACC50-1");
+    expect(byPlace.get(2)!.prizeName).toBe("25K Account");
+    expect(byPlace.get(2)!.text).toContain("ACC25-1");
+    expect(byPlace.get(3)!.prizeName).toBe("1,000 Lupees");
+    expect(byPlace.get(3)!.text).toContain("LUP-1");
+    expect([big, small, lupees].map((p) => getPrize(p.id)!.stock)).toEqual([1, 1, 1]);
+  });
 });
 
 describe("prizes", () => {
@@ -158,6 +183,35 @@ describe("prizes", () => {
   });
   it("requires {code} in a code-pool message", () => {
     expect(() => createPrize({ name: "Bad", type: "code_pool", message: "no code here" })).toThrow(/\{code\}/);
+  });
+  it("names account and Lupees prizes from their amount, and always hands them out as codes", () => {
+    const acc = createPrize({ name: " ", type: "message", kind: "account", amount: 50_000 });
+    expect(acc).toMatchObject({ name: "50K Account", type: "code_pool", kind: "account", amount: 50_000 });
+    expect(acc.message).toContain("{code}");
+    expect(createPrize({ name: "", type: "code_pool", kind: "lupees", amount: 1_000 }).name).toBe("1,000 Lupees");
+    expect(createPrize({ name: "Grand prize", type: "code_pool", kind: "account", amount: 100_000 }).name).toBe("Grand prize");
+    expect([prizeName("account", 2_500), prizeName("account", 1_500_000), prizeName("lupees", 1)]).toEqual(["2.5K Account", "1.5M Account", "1 Lupee"]);
+  });
+  it("needs an amount for accounts and Lupees, and keeps a prize's kind fixed", () => {
+    expect(() => createPrize({ name: "", type: "code_pool", kind: "account" })).toThrow(/account size/);
+    expect(() => createPrize({ name: "", type: "code_pool", kind: "lupees", amount: 0 })).toThrow(/Lupees/);
+    expect(() => createPrize({ name: "", type: "code_pool", kind: "lupees", amount: 2.5 })).toThrow(/Lupees/);
+    const acc = createPrize({ name: "", type: "code_pool", kind: "account", amount: 10_000 });
+    const edited = updatePrize(acc.id, { kind: "custom", amount: 15_000, name: "15K Account" });
+    expect(edited).toMatchObject({ kind: "account", amount: 15_000, name: "15K Account" });
+    const old = createPrize({ name: "Steam key", type: "code_pool" });
+    expect(old).toMatchObject({ kind: "custom", amount: null });
+  });
+  it("lists accounts first, then Lupees, then other prizes, biggest first", () => {
+    const made = [
+      createPrize({ name: "Zz sticker", type: "message" }),
+      createPrize({ name: "", type: "code_pool", kind: "lupees", amount: 500 }),
+      createPrize({ name: "", type: "code_pool", kind: "account", amount: 25_000 }),
+      createPrize({ name: "", type: "code_pool", kind: "lupees", amount: 5_000 }),
+      createPrize({ name: "", type: "code_pool", kind: "account", amount: 200_000 }),
+    ].map((p) => p.id);
+    const order = listPrizes().filter((p) => made.includes(p.id)).map((p) => p.name);
+    expect(order).toEqual(["200K Account", "25K Account", "5,000 Lupees", "500 Lupees", "Zz sticker"]);
   });
 });
 
@@ -324,6 +378,14 @@ describe("HTTP API", () => {
     const res = await app.inject({ method: "POST", url: "/api/prizes", cookies: { hub_sid: admin.token }, payload: { name: "", type: "message" } });
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toMatch(/name/);
+  });
+
+  it("creates a Lucid account prize with its codes", async () => {
+    const admin = startSession({ discordId: "100", username: "Admin", avatar: null });
+    const payload = { name: "", type: "code_pool", kind: "account", amount: 50_000, codes: "A50-1\nA50-2" };
+    const res = await app.inject({ method: "POST", url: "/api/prizes", cookies: { hub_sid: admin.token }, payload });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ name: "50K Account", kind: "account", amount: 50_000, stock: 2 });
   });
 
   it("offers the games in games/ to the Connect a game picker", async () => {
