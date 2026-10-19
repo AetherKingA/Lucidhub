@@ -1,5 +1,6 @@
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import type { Action, SeatView, TableView } from "../shared/protocol.ts";
+import { type RaiseRange, amountAt, positionOf, sliderPositions, snapRaise } from "../shared/betSizing.ts";
 import type { Equity } from "../shared/equity.ts";
 import { describeHand } from "../shared/handName.ts";
 import { PlayingCard } from "./Cards.tsx";
@@ -550,8 +551,8 @@ function ActionBar({ view, me }: { view: TableView; me: SeatView }) {
   const toCall = Math.max(0, view.currentBet - me.bet);
   const step = Math.max(1, Math.floor(view.level.bigBlind / 2));
   // Round to the slider's step (from the minimum), but always allow exactly the minimum and all-in.
-  const clamp = (v: number) =>
-    Math.min(legal.maxRaiseTo, Math.max(legal.minRaiseTo, legal.minRaiseTo + Math.round((v - legal.minRaiseTo) / step) * step));
+  const range: RaiseRange = { min: legal.minRaiseTo, max: legal.maxRaiseTo, step };
+  const clamp = (v: number) => snapRaise(v, range);
   const [raiseTo, setRaiseTo] = useState(legal.minRaiseTo);
 
   // Reset the raise amount each new decision.
@@ -595,9 +596,7 @@ function ActionBar({ view, me }: { view: TableView; me: SeatView }) {
       {canSize && (
         <BetSlider
           value={raiseTo}
-          min={legal.minRaiseTo}
-          max={legal.maxRaiseTo}
-          step={step}
+          range={range}
           presets={presets}
           onChange={(v) => setRaiseTo(clamp(v))}
           label={isBet ? "Bet" : "Raise to"}
@@ -623,15 +622,14 @@ function ActionBar({ view, me }: { view: TableView; me: SeatView }) {
 /** Chip-style slider with pot-size presets and fine +/- steps. */
 function BetSlider(p: {
   value: number;
-  min: number;
-  max: number;
-  step: number;
+  range: RaiseRange;
   presets: [string, number][];
   onChange: (v: number) => void;
   label: string;
 }) {
+  const { min, max, step } = p.range;
   const [typed, setTyped] = useState<string | null>(null);
-  const pct = ((p.value - p.min) / Math.max(1, p.max - p.min)) * 100;
+  const pct = ((p.value - min) / Math.max(1, max - min)) * 100;
   return (
     <div className="bet-slider">
       <div className="presets">
@@ -642,26 +640,28 @@ function BetSlider(p: {
         ))}
       </div>
       <div className="slider-row">
-        <button className="step" onClick={() => p.onChange(p.value - p.step)} aria-label="Less">
+        <button className="step" onClick={() => p.onChange(p.value - step)} aria-label="Less">
           −
         </button>
         <div className="range-wrap" style={{ "--pct": `${pct}%` } as CSSProperties}>
+          {/* The range works in step positions so its far right is exactly all-in, even off the step grid. */}
           <input
             className="bet-range"
             type="range"
-            min={p.min}
-            max={p.max}
-            step={p.step}
-            value={p.value}
-            onChange={(e) => p.onChange(Number(e.target.value))}
+            min={0}
+            max={sliderPositions(p.range)}
+            step={1}
+            value={positionOf(p.value, p.range)}
+            onChange={(e) => p.onChange(amountAt(Number(e.target.value), p.range))}
             aria-label={`${p.label} amount`}
+            aria-valuetext={chips(p.value)}
           />
           <div className="range-labels">
-            <span>{chips(p.min)}</span>
-            <span>{chips(p.max)}</span>
+            <span>{chips(min)}</span>
+            <span>{chips(max)}</span>
           </div>
         </div>
-        <button className="step" onClick={() => p.onChange(p.value + p.step)} aria-label="More">
+        <button className="step" onClick={() => p.onChange(p.value + step)} aria-label="More">
           +
         </button>
         <label className="amount-box">

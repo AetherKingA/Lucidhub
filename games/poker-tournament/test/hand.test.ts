@@ -130,6 +130,25 @@ describe("betting rules", () => {
     expect(s.players[2]!.allIn).toBe(true);
   });
 
+  it("puts a player all-in with nothing left when they raise to maxRaiseTo", () => {
+    // The 20 ante leaves p0 with 4,830, off the bet slider's step grid.
+    const cfg = table([4850, 5000, 5000], { ante: 20 });
+    const s = startHand(cfg, stackedDeck(cfg, {}));
+    const l = legalActions(s)!;
+    expect(l).toMatchObject({ playerId: "p0", maxRaiseTo: 4830 });
+    const after = play(s, ["p0", raise(l.maxRaiseTo)]);
+    expect(stack(after, "p0")).toBe(0);
+    expect(after.players[0]!.allIn).toBe(true);
+  });
+
+  it("accepts a raise a few chips short of all-in, so the client must send the exact amount", () => {
+    // This is why the slider bug went unnoticed: 4,800 of 4,830 is a legal raise that leaves 30 behind.
+    const cfg = table([4850, 5000, 5000], { ante: 20 });
+    const s = play(startHand(cfg, stackedDeck(cfg, {})), ["p0", raise(4800)]);
+    expect(stack(s, "p0")).toBe(30);
+    expect(s.players[0]!.allIn).toBe(false);
+  });
+
   it("returns an uncalled bet", () => {
     const cfg = table([1000, 1000, 1000]);
     let s = startHand(cfg, stackedDeck(cfg, {}));
