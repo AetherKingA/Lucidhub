@@ -515,6 +515,14 @@ kbd {
 /* ---------- your hand and win chance ---------- */
 /* Beside your seat, so your seat stays in place and clears the controls. */
 .seat.me .my-read { position: absolute; left: calc(100% + 12px); bottom: 0; }
+/* Your seat hangs down over the rail (anchored by its bottom, not its middle) with your cards tucked
+   further behind the plate, so your big cards stay clear of the chips you bet. Your action tag sits
+   to the left of the plate, mirroring the read on the right, so the seat doesn't reach the controls. */
+@media (min-width: 761px) {
+  .seat-slot:has(.seat.me) { transform: translate(-50%, calc(-100% + min(12cqw, 100px))); }
+  .seat.me .hole { margin-bottom: max(calc(var(--cw-mine) * -0.75), -50px); }
+  .seat.me .tag { position: absolute; right: calc(100% + 12px); bottom: 14px; margin-top: 0; }
+}
 .my-read {
   margin-top: 6px; display: flex; flex-direction: column; gap: 5px; min-width: 190px; padding: 6px 12px 8px;
   background: #000000c0; border: 1px solid #ffffff1f; border-radius: 12px; box-shadow: 0 4px 14px #0008;
@@ -532,7 +540,10 @@ kbd {
 .my-read.low .wc-win { background: linear-gradient(90deg, #8a2a24, #e5534b); }
 .wc-tie { background: #9fd0ff99; transition: width 0.4s ease; }
 @media (max-width: 760px) {
-  .seat-slot:has(.seat.me) { transform: translate(-50%, -55%); }
+  /* Same idea on phones: hang your seat lower, cards tucked behind the plate, action tag to its left. */
+  .seat-slot:has(.seat.me) { transform: translate(-50%, calc(-100% + 80px)); }
+  .seat.me .hole { margin-bottom: -44px; }
+  .seat.me .tag { position: absolute; right: calc(100% + 6px); top: 46px; margin-top: 0; }
   .seat.me .my-read { position: static; }
   .my-read { min-width: 130px; padding: 4px 8px 6px; gap: 3px; }
   .mr-line { font-size: 11px; gap: 6px; }
