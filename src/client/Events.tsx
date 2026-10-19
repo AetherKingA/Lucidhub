@@ -411,6 +411,7 @@ const PLAYER_STATUS: Record<GamePlayer["status"], string> = {
   waiting: "Waiting for next round",
   out: "Out",
   removed: "Kicked",
+  afk: "Removed (AFK)",
 };
 
 /** Open or closed lobby, join requests to let in, and kicking players. Live: re-read every few seconds. */
@@ -527,9 +528,15 @@ function LobbyPanel({ event, onChange }: { event: HubEvent; onChange: () => Prom
       ) : (
         <ul className="list">
           {inEvent.map((p) => (
-            <li key={p.discordId || p.username} className={p.status === "out" || p.status === "removed" ? "dim" : ""}>
+            <li key={p.discordId || p.username} className={p.status === "out" || p.status === "removed" || p.status === "afk" ? "dim" : ""}>
               <PlayerName p={p} />
-              <span className="muted small">{p.place !== null && p.status !== "removed" ? ordinal(p.place) : PLAYER_STATUS[p.status]}</span>
+              <span className="muted small">
+                {p.status === "afk"
+                  ? `${p.place !== null ? `${ordinal(p.place)} · ` : ""}${PLAYER_STATUS.afk}`
+                  : p.place !== null && p.status !== "removed"
+                    ? ordinal(p.place)
+                    : PLAYER_STATUS[p.status]}
+              </span>
               {(p.status === "registered" || p.status === "playing" || p.status === "waiting") && p.discordId && (
                 <button className="link danger" disabled={busy} onClick={() => act(p, "kick")}>
                   Kick

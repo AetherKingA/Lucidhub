@@ -416,6 +416,8 @@ kbd {
   display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap;
   padding: 12px 16px; background: #3a2f12; color: #f5d98a; text-align: center; font-size: 15px; position: relative; z-index: 2;
 }
+.afk-left { display: block; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.afk-left.soon { color: #ff8f88; }
 
 /* ---------- chat ---------- */
 .chat-panel { position: relative; z-index: 2; min-height: 0; border-left: 1px solid #ffffff14; background: #0b110eeb; backdrop-filter: blur(6px); }

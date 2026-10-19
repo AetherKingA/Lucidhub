@@ -347,7 +347,10 @@ function Table(p: { view: TableView; sound: boolean; followingId: number | null;
 
       {me?.away && (
         <div className="away-bar">
-          You're sitting out — you're folded automatically each hand and blinds are still posted.
+          <span>
+            You're sitting out — you're folded automatically each hand and blinds are still posted.
+            {me.afkKickAt !== null && <AfkCountdown at={me.afkKickAt} paused={view.paused} sound={sound} />}
+          </span>
           <button
             className="btn primary"
             onClick={() => {
@@ -361,6 +364,20 @@ function Table(p: { view: TableView; sound: boolean; followingId: number | null;
       )}
       {me && !me.away && <ActionArea view={view} me={me} sound={sound} />}
     </>
+  );
+}
+
+/** In the sit-out bar: how long until you're removed for being away, with a warning sound at one minute. */
+function AfkCountdown({ at, paused, sound }: { at: number; paused: boolean; sound: boolean }) {
+  const left = at - useServerNow(500);
+  const warn = !paused && left > 0 && left <= 60_000;
+  useEffect(() => {
+    if (warn && sound) play("warn");
+  }, [warn]);
+  return (
+    <b className={`afk-left ${warn ? "soon" : ""}`}>
+      {paused ? "Your AFK countdown is paused." : `You'll be removed in ${formatClock(left)} unless you come back.`}
+    </b>
   );
 }
 

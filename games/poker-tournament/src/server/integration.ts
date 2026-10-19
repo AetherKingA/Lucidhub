@@ -113,6 +113,15 @@ function fields(): EventField[] {
     { name: "breakMinutes", label: "Break length (minutes)", type: "number", default: d.breakMinutes, min: 0, max: 60 },
     { name: "decisionSeconds", label: "Decision time (seconds)", type: "number", default: d.decisionSeconds, min: 5, max: 120 },
     { name: "timeBankSeconds", label: "Time bank (seconds)", type: "number", default: d.timeBankSeconds, min: 0, max: 600 },
+    {
+      name: "afkKickMinutes",
+      label: "Kick AFK players after (minutes)",
+      type: "number",
+      default: d.afkKickMinutes,
+      min: 0,
+      max: 60,
+      help: "A player who times out or sits out is removed after this long, as if knocked out. Pauses and breaks don't count. 0 = never.",
+    },
     { name: "payoutPercent", label: "Paid places (% of field)", type: "number", default: d.payoutPercent, min: 1, max: 50 },
     {
       name: "rabbitHunt",
@@ -151,7 +160,8 @@ export interface EventPlayer {
   discordId: string;
   username: string;
   avatarUrl: string;
-  status: "pending" | "registered" | "playing" | "waiting" | "out" | "removed";
+  /** "removed": kicked by an admin. "afk": removed for staying away longer than the event's AFK limit. */
+  status: "pending" | "registered" | "playing" | "waiting" | "out" | "removed" | "afk";
   place: number | null;
   /** When they registered, or asked to join. */
   joinedAt: number;
@@ -159,11 +169,12 @@ export interface EventPlayer {
   record: PlayerRecord;
 }
 
-const STATUS_ORDER: EventPlayer["status"][] = ["pending", "playing", "waiting", "registered", "out", "removed"];
+const STATUS_ORDER: EventPlayer["status"][] = ["pending", "playing", "waiting", "registered", "out", "afk", "removed"];
 
 /** Everyone in a tournament, plus (before the start) everyone asking to join. For the hub's lobby panel. */
 function playerList(m: TournamentMeta, manager: TournamentManager): EventPlayer[] {
   const kicked = new Set(m.kicked ?? []);
+  const afk = new Set(m.afkKicked ?? []);
   const pending: EventPlayer[] =
     m.status === "registering"
       ? Object.values(m.pending ?? {}).map((p) => ({
@@ -184,15 +195,17 @@ function playerList(m: TournamentMeta, manager: TournamentManager): EventPlayer[
       avatarUrl: e.avatarUrl,
       status: kicked.has(e.userId)
         ? "removed"
-        : e.place !== null
-          ? "out"
-          : m.status === "registering"
-            ? "registered"
-            : e.tableId !== null
-              ? "playing"
-              : e.advancedTo !== null
-                ? "waiting"
-                : "out",
+        : afk.has(e.userId)
+          ? "afk"
+          : e.place !== null
+            ? "out"
+            : m.status === "registering"
+              ? "registered"
+              : e.tableId !== null
+                ? "playing"
+                : e.advancedTo !== null
+                  ? "waiting"
+                  : "out",
       place: e.place,
       joinedAt: e.registeredAt,
       online: manager.isOnline(e.userId),

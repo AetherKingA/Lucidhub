@@ -161,6 +161,7 @@ function CreateTournament() {
     breakMinutes: 5,
     decisionSeconds: 20,
     payoutPercent: 15,
+    afkKickMinutes: 5,
     rabbitHunt: "on",
   }));
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
@@ -235,6 +236,7 @@ function CreateTournament() {
         {num("breakMinutes", "Break length (min)", 0, 60)}
         {num("decisionSeconds", "Seconds per decision", 5, 120)}
         {num("payoutPercent", "% of field paid", 1, 50)}
+        {num("afkKickMinutes", "Kick AFK players after (min, 0 = never)", 0, 60)}
         <label>
           Rabbit Hunt
           <select value={form.rabbitHunt} onChange={set("rabbitHunt")}>

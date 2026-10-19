@@ -42,6 +42,8 @@ export interface TournamentHooks {
   tournamentFinished(): void;
   /** A hand just ended: who won what, as lines for the table chat. */
   handComplete(tableId: number, lines: string[]): void;
+  /** A dealer line for the table chat that isn't a hand result, e.g. someone removed for being AFK. */
+  tableNotice(tableId: number, line: string): void;
   /** Something needs saving: the meta row, or a table row (deleted = remove it). */
   dirty(what: "meta" | { tableId: number; deleted?: boolean }): void;
 }
@@ -58,6 +60,7 @@ export const noopHooks: TournamentHooks = {
   playerFinished: noop,
   tournamentFinished: noop,
   handComplete: noop,
+  tableNotice: noop,
   dirty: noop,
 };
 
@@ -315,6 +318,7 @@ export class Tournament {
       if (t.clock.endsAt !== null) t.clock.endsAt += shift;
       if (t.actionStartedAt !== null) t.actionStartedAt += shift;
       if (t.handDoneAt !== null) t.handDoneAt += shift;
+      this.skipAfkTime(t, m.pausedAt, now);
     }
     m.paused = false;
     m.pauseReason = null;
@@ -325,6 +329,8 @@ export class Tournament {
   /** After loading from disk: a tournament that was running comes back paused at the moment it was last saved. */
   restoreAfterRestart() {
     const m = this.meta;
+    // Nobody is removed for the server's downtime: AFK countdowns start over at the next tick.
+    for (const t of this.tables.values()) for (const s of t.seats) if (s) s.awaySince = null;
     if (m.status === "running" && !m.paused) {
       m.paused = true;
       m.pausedAt = m.savedAt;
@@ -363,12 +369,19 @@ export class Tournament {
     }
   }
 
-  setAway(userId: number, away: boolean) {
+  setAway(userId: number, away: boolean, now: number) {
     const loc = this.locate(userId);
     if (!loc) throw new TournamentError("You are not seated");
     if (loc.seat.leaving) return;
-    loc.seat.away = away;
+    this.markAway(loc.seat, away, now);
     this.touchTable(loc.table);
+  }
+
+  /** Away starts the AFK countdown (unless it's already running); coming back clears it. */
+  private markAway(seat: SeatPlayer, away: boolean, now: number) {
+    if (away && !seat.away) seat.awaySince = now;
+    if (!away) seat.awaySince = null;
+    seat.away = away;
   }
 
   // ---------------------------------------------------------------- playing
@@ -387,7 +400,7 @@ export class Tournament {
     // Time past the normal decision window comes out of the time bank.
     const overflow = Math.max(0, now - (table.actionStartedAt ?? now) - this.config.decisionSeconds * 1000);
     seat.timeBankMs = Math.max(0, seat.timeBankMs - overflow);
-    seat.away = false;
+    this.markAway(seat, false, now);
     this.applyHand(table, userId, action, now);
   }
 
@@ -404,6 +417,7 @@ export class Tournament {
 
     for (const t of [...this.tables.values()]) {
       this.advanceClock(t, now);
+      this.kickAfk(t, now);
       this.tickTable(t, now);
     }
     if (m.status !== "running") return; // the final table may have just finished
@@ -429,11 +443,42 @@ export class Tournament {
         const deadline = (t.actionStartedAt ?? now) + decisionMs + (connected ? seat.timeBankMs : 0);
         if (now < deadline) break;
         if (connected) seat.timeBankMs = 0;
-        seat.away = true;
+        this.markAway(seat, true, now);
       }
       const legal = legalActions(t.hand)!;
       this.applyHand(t, seat.userId, legal.canCheck && !seat.leaving ? { type: "check" } : { type: "fold" }, now);
     }
+  }
+
+  /** Removes players who stayed away past the AFK limit, as if knocked out at that moment. */
+  private kickAfk(t: TableState, now: number) {
+    if (!this.config.afkKickMinutes || t.clock.phase === "break") return; // the countdown is frozen on breaks
+    for (const seat of t.seats) {
+      if (!seat?.away || seat.leaving) continue;
+      seat.awaySince ??= now; // after a restart, or on a tournament saved before this setting
+      if (now < this.afkKickAt(t, seat)!) continue;
+      (this.meta.afkKicked ??= []).push(seat.userId);
+      this.hooks.tableNotice(t.id, `${this.meta.entrants[seat.userId]?.username ?? "A player"} was removed for being away too long.`);
+      this.removeSeated(seat.userId, now);
+      this.hooks.dirty("meta");
+      this.hooks.lobbyChanged();
+    }
+  }
+
+  /** When an away player will be removed. Null when they aren't away, are already leaving, or there's no limit. */
+  private afkKickAt(t: TableState, seat: SeatPlayer): number | null {
+    const limitMs = (this.config.afkKickMinutes ?? 0) * 60_000;
+    if (!limitMs || !seat.away || seat.leaving || seat.awaySince == null) return null;
+    // On a break the countdown is frozen: it moves on by the rest of the break once it ends (see advanceClock).
+    const c = t.clock;
+    const onBreak = c.phase === "break" && c.endsAt !== null;
+    const frozen = onBreak ? c.endsAt! - Math.max(seat.awaySince, c.endsAt! - this.config.breakMinutes * 60_000) : 0;
+    return seat.awaySince + Math.max(0, frozen) + limitMs;
+  }
+
+  /** Time away between `from` and `to` (a pause or a break) doesn't count toward the AFK limit. */
+  private skipAfkTime(t: TableState, from: number, to: number) {
+    for (const s of t.seats) if (s?.away && s.awaySince != null && s.awaySince < to) s.awaySince += to - Math.max(s.awaySince, from);
   }
 
   private applyHand(t: TableState, userId: number, action: Action, now: number) {
@@ -656,6 +701,7 @@ export class Tournament {
           continue;
         }
       }
+      if (c.phase === "break") this.skipAfkTime(t, end - breakMinutes * 60_000, end);
       c.phase = "level";
       c.level++;
       c.endsAt = end + levels[c.level]!.minutes * 60_000;
@@ -874,6 +920,7 @@ export class Tournament {
         won: payouts[pid] ?? 0,
         handName: shown?.handName ?? null,
         timeBankMs: s.timeBankMs,
+        afkKickAt: this.afkKickAt(t, s),
       };
     });
 

@@ -80,6 +80,10 @@ export class Realtime implements Notifier {
     if (messages.length) this.sendChat(k, tournamentId, tableId, "table", messages);
   }
 
+  tableNotice(tournamentId: number, tableId: number, line: string) {
+    this.handComplete(tournamentId, tableId, [line]);
+  }
+
   isConnected(userId: number) {
     return (this.byUser.get(userId)?.size ?? 0) > 0;
   }
@@ -308,10 +312,10 @@ export class Realtime implements Notifier {
           t.act(userId, parseAction(msg.action), now);
           break;
         case "back":
-          t.setAway(userId, false);
+          t.setAway(userId, false, now);
           break;
         case "sitOut":
-          t.setAway(userId, true);
+          t.setAway(userId, true, now);
           break;
         case "chat": {
           // Only at a table you're sitting at or watching.

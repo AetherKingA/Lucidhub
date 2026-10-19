@@ -67,7 +67,8 @@ export interface GameEvent {
 /** "open": anyone can join. "closed": players ask, and an admin approves each one. */
 export type LobbyAccess = "open" | "closed";
 
-export type PlayerStatus = "pending" | "registered" | "playing" | "waiting" | "out" | "removed";
+/** "removed": kicked by an admin. "afk": the game removed them for staying away too long (see INTEGRATION.md). */
+export type PlayerStatus = "pending" | "registered" | "playing" | "waiting" | "out" | "removed" | "afk";
 
 export interface GamePlayer {
   discordId: string;

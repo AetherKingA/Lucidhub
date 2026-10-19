@@ -27,6 +27,7 @@ const notifier = {
   playerAdvanced: () => {},
   playerFinished: () => {},
   handComplete: () => {},
+  tableNotice: () => {},
 };
 const manager = new TournamentManager(notifier);
 const app = Fastify();
@@ -67,7 +68,7 @@ describe("signatures", () => {
     expect(info).toMatchObject({ key: "poker", name: "Poker Night" });
     expect(info.fields.map((f: { name: string }) => f.name)).toEqual([
       "name", "startTime", "access", "maxPlayers", "startingStack", "chipMode", "levels", "breakEveryLevels",
-      "breakMinutes", "decisionSeconds", "timeBankSeconds", "payoutPercent", "rabbitHunt",
+      "breakMinutes", "decisionSeconds", "timeBankSeconds", "afkKickMinutes", "payoutPercent", "rabbitHunt",
     ]);
     expect(info.fields.find((f: { name: string }) => f.name === "maxPlayers").options.map((o: { value: number }) => o.value)).toEqual([6, 36, 216, 1296]);
   });
@@ -282,6 +283,22 @@ describe("lobby", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().players.find((p: { discordId: string }) => p.discordId === "7101").status).toBe("removed");
     expect((await hub("POST", `/api/integration/events/${ev.id}/players/7101/kick`, {})).statusCode).toBe(400);
+    await hub("POST", `/api/integration/events/${ev.id}/cancel`, {});
+  });
+
+  it("takes the AFK limit from the hub and reports players it removed", async () => {
+    const ev = (await hub("POST", "/api/integration/events", { name: "AFK test", startTime: Date.now() + 3_600_000, afkKickMinutes: 1 })).json();
+    const t = manager.get(Number(ev.id))!;
+    expect(t.config.afkKickMinutes).toBe(1);
+    const ids = ["7201", "7202", "7203"].map((d, i) => upsertUser(d, `afk${i}`, null).id);
+    for (const [i, id] of ids.entries()) t.register({ id, username: `afk${i}`, avatarUrl: "" }, Date.now());
+    expect((await hub("POST", `/api/integration/events/${ev.id}/start`, {})).statusCode).toBe(200);
+    const now = Date.now();
+    t.setAway(ids[0]!, true, now - 61_000);
+    t.tick(now);
+    const players = (await hub("GET", `/api/integration/events/${ev.id}/players`)).json().players;
+    expect(players.find((p: { discordId: string }) => p.discordId === "7201").status).toBe("afk");
+    expect(players.find((p: { discordId: string }) => p.discordId === "7202").status).toBe("playing");
     await hub("POST", `/api/integration/events/${ev.id}/cancel`, {});
   });
 });

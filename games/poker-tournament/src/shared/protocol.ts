@@ -79,6 +79,8 @@ export interface SeatView {
   won: number;
   handName: string | null;
   timeBankMs: number;
+  /** While sitting out: when they'll be removed for being away too long (server time). Null: no limit. */
+  afkKickAt: number | null;
 }
 
 export interface TableView {

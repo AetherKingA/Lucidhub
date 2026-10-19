@@ -19,6 +19,8 @@ export interface Notifier {
   playerFinished(tournamentId: number, userId: number, place: number, points: number): void;
   /** A hand ended at a table; lines describe who won, for the table chat. */
   handComplete(tournamentId: number, tableId: number, lines: string[]): void;
+  /** A dealer line for the table chat that isn't a hand result, e.g. someone removed for being AFK. */
+  tableNotice(tournamentId: number, tableId: number, line: string): void;
 }
 
 /** Admin-facing options for creating a tournament. Everything else uses the defaults. */
@@ -41,6 +43,8 @@ export interface CreateOptions {
   payoutPercent?: number;
   /** "on" (default) or "off": show the rest of the board after a hand, and folders how they'd have done. */
   rabbitHunt?: string;
+  /** Minutes a player may stay away before they're removed. 0 = never. */
+  afkKickMinutes?: number;
 }
 
 const clamp = (v: unknown, min: number, max: number, fallback: number) => {
@@ -112,6 +116,7 @@ export class TournamentManager {
       timeBankSeconds: clamp(opts.timeBankSeconds, 0, 600, base.timeBankSeconds),
       payoutPercent: clamp(opts.payoutPercent, 1, 50, base.payoutPercent),
       rabbitHunt: opts.rabbitHunt !== "off",
+      afkKickMinutes: clamp(opts.afkKickMinutes, 0, 60, base.afkKickMinutes!),
     };
     const id = insertTournament(config, now);
     const t = Tournament.create(id, config, now, this.hooksFor(id));
@@ -220,6 +225,7 @@ export class TournamentManager {
         n.playerFinished(tournamentId, userId, place, points);
       },
       handComplete: (tableId, lines) => n.handComplete(tournamentId, tableId, lines),
+      tableNotice: (tableId, line) => n.tableNotice(tournamentId, tableId, line),
       tournamentFinished: () => {
         // Save first so the hub finds the final status and results when it calls back.
         this.flush();

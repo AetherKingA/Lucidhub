@@ -40,6 +40,12 @@ export interface TournamentConfig {
    * folded how their hand would have done. Missing on tournaments saved before this setting: on.
    */
   rabbitHunt?: boolean;
+  /**
+   * A player marked away (timed out, disconnected or sat out) for this many minutes of play is removed,
+   * as if knocked out at that moment. Pauses and breaks don't count. 0 = never. Missing on tournaments
+   * saved before this setting: never, so events already running don't change.
+   */
+  afkKickMinutes?: number;
 }
 
 export type ChipMode = "fair" | "bully";
@@ -120,6 +126,8 @@ export interface TournamentMeta {
   pending?: Record<string, PendingEntrant>;
   /** Players an admin removed. They can't register again, and leave their next table as soon as they reach it. */
   kicked?: number[];
+  /** Players removed for staying away longer than afkKickMinutes. */
+  afkKicked?: number[];
   /** Players not yet knocked out (seated or waiting for their next table). */
   remaining: number;
   /** Indexed by node id. Empty until the start. */
@@ -141,6 +149,11 @@ export interface SeatPlayer {
   /** Kicked by an admin: folds every hand and is removed when the current hand ends. */
   leaving: boolean;
   timeBankMs: number;
+  /**
+   * When the AFK countdown started (epoch ms), while away. Shifted past pauses and breaks, and cleared on
+   * a restart so nobody is removed for the server's downtime. Missing or null while away: starts at the next tick.
+   */
+  awaySince?: number | null;
 }
 
 /** One table. Saved as its own JSON row so an action only rewrites ~5 KB. */

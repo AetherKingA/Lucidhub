@@ -247,11 +247,134 @@ describe("decision timers", () => {
     t.tick(0);
     const tb = firstTable(t);
     const who = actor(tb)!;
-    t.setAway(who, true);
+    t.setAway(who, true, 1);
     t.tick(1);
     expect(actor(tb)).not.toBe(who);
-    t.setAway(who, false);
+    t.setAway(who, false, 2);
     expect(seatOf(tb, who).away).toBe(false);
+  });
+});
+
+describe("AFK kick", () => {
+  // A huge stack so nobody busts from blinds while the clock runs.
+  const AFK = { afkKickMinutes: 5, startingStack: 1_000_000 };
+
+  /** Ticks every second until `until`; everyone who isn't away checks or folds at once. */
+  function playOn(t: Tournament, tb: TableState, from: number, until: number) {
+    for (let now = from; now <= until; now += 1000) {
+      const who = actor(tb);
+      const seat = tb.seats.find((s) => s?.userId === who);
+      if (who !== null && seat && !seat.away && !seat.leaving) {
+        t.act(who, legalActions(tb.hand!)!.canCheck ? { type: "check" } : { type: "fold" }, now);
+      }
+      t.tick(now);
+    }
+  }
+
+  const kickAt = (t: Tournament, tb: TableState, userId: number, now: number) =>
+    t.tableView(tb.id, userId, now)!.seats.find((s) => s?.userId === userId)!.afkKickAt;
+
+  it("removes a player who stays away past the limit, as if knocked out, and says so at the table", () => {
+    const notices: string[] = [];
+    const t = makeTournament(3, AFK, { tableNotice: (_table, line) => notices.push(line) });
+    t.tick(0);
+    const tb = firstTable(t);
+    const afk = actor(tb)!;
+    t.setAway(afk, true, 0);
+    expect(kickAt(t, tb, afk, 0)).toBe(5 * MIN);
+    playOn(t, tb, 0, 5 * MIN - 1000);
+    expect(t.meta.afkKicked).toBeUndefined();
+    playOn(t, tb, 5 * MIN, 5 * MIN + 30_000);
+    expect(t.meta.afkKicked).toEqual([afk]);
+    expect(t.meta.kicked).toBeUndefined(); // not an admin kick: they aren't told an admin removed them
+    expect(t.meta.entrants[afk]!.place).toBe(3);
+    expect(t.meta.remaining).toBe(2);
+    expect(tb.seats.some((s) => s?.userId === afk)).toBe(false);
+    expect(notices).toEqual([`bot${afk} was removed for being away too long.`]);
+  });
+
+  it("starts the countdown on a timeout or sit out, and resets it when they come back", () => {
+    const t = makeTournament(3, { ...AFK, decisionSeconds: 20, timeBankSeconds: 0 });
+    t.tick(0);
+    const tb = firstTable(t);
+    const slow = actor(tb)!;
+    t.tick(20_000); // timed out
+    expect(seatOf(tb, slow).away).toBe(true);
+    expect(kickAt(t, tb, slow, 20_000)).toBe(20_000 + 5 * MIN);
+    t.setAway(slow, true, 50_000); // already away: the countdown keeps running
+    expect(kickAt(t, tb, slow, 50_000)).toBe(20_000 + 5 * MIN);
+    t.setAway(slow, false, 60_000);
+    expect(kickAt(t, tb, slow, 60_000)).toBeNull();
+    t.setAway(slow, true, 120_000); // sat out
+    expect(kickAt(t, tb, slow, 120_000)).toBe(120_000 + 5 * MIN);
+  });
+
+  it("never kicks with the limit at 0, or on tournaments saved before the setting existed", () => {
+    for (const cfg of [{ afkKickMinutes: 0 }, {}]) {
+      const t = makeTournament(3, { ...AFK, ...cfg });
+      if (!("afkKickMinutes" in cfg)) delete t.meta.config.afkKickMinutes;
+      t.tick(0);
+      const tb = firstTable(t);
+      const afk = actor(tb)!;
+      t.setAway(afk, true, 0);
+      expect(kickAt(t, tb, afk, 0)).toBeNull();
+      playOn(t, tb, 0, 12 * MIN);
+      expect(t.meta.afkKicked).toBeUndefined();
+      expect(seatOf(tb, afk).away).toBe(true);
+    }
+  });
+
+  it("doesn't count time while the tournament is paused", () => {
+    const t = makeTournament(3, AFK);
+    t.tick(0);
+    const tb = firstTable(t);
+    const afk = actor(tb)!;
+    t.setAway(afk, true, 0);
+    t.pause("dinner", 1 * MIN);
+    t.tick(30 * MIN);
+    t.resume(61 * MIN);
+    expect(kickAt(t, tb, afk, 61 * MIN)).toBe(65 * MIN);
+    playOn(t, tb, 61 * MIN, 65 * MIN - 1000);
+    expect(t.meta.afkKicked).toBeUndefined();
+    playOn(t, tb, 65 * MIN, 65 * MIN + 1000);
+    expect(t.meta.afkKicked).toEqual([afk]);
+  });
+
+  it("doesn't count time on a break", () => {
+    // Level 1 runs 0-2 min, then a 10 minute break until 12 min, then level 2 until 42 min.
+    const levels = defaultConfig().levels.map((l, i) => ({ ...l, minutes: i === 0 ? 2 : 30 }));
+    const t = makeTournament(3, { ...AFK, levels, breakEveryLevels: 1, breakMinutes: 10 });
+    t.tick(0);
+    const tb = firstTable(t);
+    const afk = actor(tb)!;
+    t.setAway(afk, true, 0);
+    // 2 minutes away before the break, so 3 more after it: removed at 15 min.
+    playOn(t, tb, 0, 11 * MIN);
+    expect(tb.clock.phase).toBe("break");
+    expect(kickAt(t, tb, afk, 11 * MIN)).toBe(15 * MIN);
+    expect(t.meta.afkKicked).toBeUndefined();
+    playOn(t, tb, 11 * MIN, 15 * MIN - 1000);
+    expect(t.meta.afkKicked).toBeUndefined();
+    playOn(t, tb, 15 * MIN, 15 * MIN + 1000);
+    expect(t.meta.afkKicked).toEqual([afk]);
+  });
+
+  it("starts the countdown over after a restart, so nobody is removed for the downtime", () => {
+    const t = makeTournament(3, AFK);
+    t.tick(0);
+    const tb = firstTable(t);
+    const afk = actor(tb)!;
+    t.setAway(afk, true, 0);
+    t.meta.savedAt = 4 * MIN;
+    const meta = JSON.parse(JSON.stringify(t.meta));
+    const tables = new Map([...t.tables].map(([id, x]) => [id, JSON.parse(JSON.stringify(x))]));
+    const restored = new Tournament(meta, tables);
+    restored.restoreAfterRestart();
+    restored.resume(100 * MIN);
+    restored.tick(100 * MIN);
+    const rtb = restored.tables.get(tb.id)!;
+    expect(restored.meta.afkKicked).toBeUndefined();
+    expect(kickAt(restored, rtb, afk, 100 * MIN)).toBe(105 * MIN);
   });
 });
 

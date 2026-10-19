@@ -56,12 +56,24 @@ GameEvent = { id: string, name, status: "registering" | "running" | "finished" |
               access?: "open" | "closed", pending?: number,          // pending = join requests waiting
               watchUrl?: string | null }
 GamePlayer = { discordId, username, avatarUrl,
-               status: "pending" | "registered" | "playing" | "waiting" | "out" | "removed", place }
+               status: "pending" | "registered" | "playing" | "waiting" | "out" | "removed" | "afk", place }
 ```
+
+`removed` means an admin kicked the player. `afk` means the game removed them for staying away too long (see below). The hub shows it as "Removed (AFK)", next to their place when they have one.
 
 `watchUrl` is optional: send it only while the event is running, pointing at the game's spectator page (games use `PUBLIC_URL/#/t/<id>/watch`). The hub then shows a "Watch live" link. Only `http(s)` links are kept, and leaving the field out clears it.
 
 To let the admin choose the lobby when creating an event, offer an `access` select field (`open` / `closed`) in `info`.
+
+### AFK kick (shared rule)
+
+Games where a player who doesn't act gets played for automatically (poker today; Uno should follow the same rule) offer one `number` field in `info`. Chess doesn't need it: its clock already ends the game.
+
+- **Field:** `afkKickMinutes`, min 0, max 60. 0 means never kick. Poker's default is 5.
+- **When the countdown runs:** while the player is marked away, because they timed out, were disconnected when their turn came, or chose to sit out. Acting again or pressing "I'm back" resets it. Paused time and break time don't count, and a game restart starts every countdown over, so nobody is removed for the server's downtime.
+- **When it runs out:** the player is removed the same way as an admin kick (folded out of a hand in progress first). They still get a finishing place and points, as if knocked out at that moment.
+- **Telling people:** the table chat says the player was removed for being away too long, the player sees a countdown while sitting out, and the lobby reports them with status `afk`.
+- **Older events** saved without the field: never kick, so events already running don't change.
 
 ## Webhook the game sends (game → hub)
 

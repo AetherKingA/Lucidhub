@@ -120,6 +120,7 @@ export function defaultConfig(overrides: Partial<TournamentConfig> = {}): Tourna
     payoutPercent: 15,
     chipMode: "fair",
     rabbitHunt: true,
+    afkKickMinutes: 5,
     ...overrides,
   };
 }
