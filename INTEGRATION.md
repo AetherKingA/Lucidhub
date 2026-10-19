@@ -42,6 +42,9 @@ All JSON. Errors are `{"error": "<message for the admin>"}` with a 4xx status.
 | `POST /api/integration/events/:id/:op` | `op` is `start`, `pause`, `resume` or `cancel`. Returns the updated `GameEvent`. |
 | `GET /api/integration/events/:id/results` | `{ id, status, finishedAt, results: [{ discordId, username, place }] }`, sorted by place. |
 | `POST /api/integration/shutdown` | *Optional.* Save, answer `{ ok: true }`, then exit. Lets the hub stop a server it runs (Windows can't send Ctrl+C to a background process). Without it the hub force-stops the process. |
+| `GET /api/integration/events/:id/players` | *Optional (lobby controls).* `GameLobby`: `{ access, players: GamePlayer[] }`. A 404 hides the event's Lobby panel in the hub. |
+| `POST /api/integration/events/:id/access` | Body: `{ access: "open" \| "closed" }`. Closed: registering only asks to join. Opening lets in everyone waiting. Returns `GameLobby`. |
+| `POST /api/integration/events/:id/players/:discordId/:action` | `action` is `approve` or `deny` (a join request) or `kick` (removes the player for good: they're knocked out if it's running and can't register again). Returns `GameLobby`. |
 
 Types are in `src/shared/protocol.ts`:
 
@@ -49,8 +52,13 @@ Types are in `src/shared/protocol.ts`:
 GameField = { name, label, type: "text" | "number" | "datetime" | "select", default?, min?, max?,
               options?: { value, label }[], help? }        // datetime values are epoch ms
 GameEvent = { id: string, name, status: "registering" | "running" | "finished" | "cancelled",
-              startTime, entrants, maxPlayers, startedAt, finishedAt, url }
+              startTime, entrants, maxPlayers, startedAt, finishedAt, url,
+              access?: "open" | "closed", pending?: number }        // pending = join requests waiting
+GamePlayer = { discordId, username, avatarUrl,
+               status: "pending" | "registered" | "playing" | "waiting" | "out" | "removed", place }
 ```
+
+To let the admin choose the lobby when creating an event, offer an `access` select field (`open` / `closed`) in `info`.
 
 ## Webhook the game sends (game → hub)
 
@@ -61,8 +69,12 @@ POST {HUB_URL}/api/games/{key}/webhook
 {"type":"event.finished","externalId":"<event id>"}
 ```
 
-Fire and forget — no retries needed. The hub also polls every game every two minutes, so a missed
-webhook only delays prizes; it never loses them. The results route must already return the final
+Whenever an event's players change (someone registers, asks to join, is let in, knocked out or kicked),
+send `{"type":"event.updated","externalId":"<event id>"}` the same way, at most about once a second per
+event. The hub re-reads the game's events, so player counts on the dashboard stay live.
+
+Fire and forget — no retries needed. The hub also polls every game every two minutes (every 15 seconds
+while it has an event open or running), so a missed webhook only delays things; it never loses them. The results route must already return the final
 places when the webhook is sent.
 
 ## Letting the hub run the server

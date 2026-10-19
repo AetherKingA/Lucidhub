@@ -4,7 +4,7 @@
 
 import { raiseAlert } from "./alerts.ts";
 import { awardEvent } from "./awards.ts";
-import { upsertEvent, unprocessedEnded } from "./events.ts";
+import { listEvents, upsertEvent, unprocessedEnded } from "./events.ts";
 import { type Game, gameClient, getGame, listGames } from "./games.ts";
 
 /** How far back to ask games for events. */
@@ -12,11 +12,16 @@ const LOOKBACK_MS = 7 * 86_400_000;
 
 const offline = new Set<number>();
 const syncing = new Map<number, Promise<void>>();
+/** Games that changed again while a sync was under way: they sync once more when it ends, so the latest change isn't missed. */
+const again = new Set<number>();
 
 /** Syncs one game's events, then awards any of its events that ended. */
 export function syncGame(game: Game): Promise<void> {
   const existing = syncing.get(game.id);
-  if (existing) return existing;
+  if (existing) {
+    again.add(game.id);
+    return existing;
+  }
   const p = (async () => {
     try {
       const events = await gameClient.listEvents(game, Date.now() - LOOKBACK_MS);
@@ -36,13 +41,22 @@ export function syncGame(game: Game): Promise<void> {
         console.warn(`[sync] Could not award event ${ev.id}:`, (err as Error).message);
       }
     }
-  })().finally(() => syncing.delete(game.id));
+  })().finally(() => {
+    syncing.delete(game.id);
+    if (again.delete(game.id)) void syncGame(game);
+  });
   syncing.set(game.id, p);
   return p;
 }
 
 export async function syncAll() {
   await Promise.all(listGames().filter((g) => g.enabled).map((g) => syncGame(g)));
+}
+
+/** Syncs just the games with an event open or under way, so player counts stay current even if a webhook is missed. */
+export async function syncLive() {
+  const live = new Set([...listEvents({ status: "registering" }), ...listEvents({ status: "running" })].map((e) => e.gameId));
+  await Promise.all(listGames().filter((g) => g.enabled && live.has(g.id)).map((g) => syncGame(g)));
 }
 
 export function syncGameById(id: number) {

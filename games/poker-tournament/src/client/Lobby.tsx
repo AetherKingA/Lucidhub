@@ -113,9 +113,18 @@ function TournamentCard({ t }: { t: TournamentSummary }) {
               </button>
             )}
           </>
+        ) : me?.removed ? (
+          <span className="muted">An admin removed you from this tournament</span>
+        ) : me?.pending ? (
+          <>
+            <span className="muted">⏳ Asked to join · waiting for an admin to let you in</span>
+            <button className="btn ghost" onClick={() => send({ type: "unregister", tournamentId: t.id })}>
+              Cancel request
+            </button>
+          </>
         ) : t.registrationOpen ? (
           <button className="btn primary" onClick={() => send({ type: "register", tournamentId: t.id })}>
-            Register
+            {t.access === "closed" ? "Ask to join" : "Register"}
           </button>
         ) : null}
         <button className="btn ghost" onClick={open}>

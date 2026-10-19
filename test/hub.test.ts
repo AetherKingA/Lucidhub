@@ -358,4 +358,37 @@ describe("HTTP API", () => {
     await call("DELETE", `/api/blind-presets/${list[0].id.replace("saved-", "")}`);
     expect((await call("GET", `/api/games/${game.id}/blind-presets`)).json()).toEqual([]);
   });
+
+  it("mirrors a closed lobby and passes approvals, kicks and opening it to the game", async () => {
+    const game = addGame({ key: `lobby${uid()}`, name: "Lobby game", baseUrl: "http://lobby.test", secret: "lsec" });
+    const ev: GameEvent = { id: "5", name: "Invite only", status: "registering", startTime: Date.now(), entrants: 0, maxPlayers: 8, startedAt: null, finishedAt: null, url: null, access: "closed", pending: 1 };
+    const lobby = { access: "closed", players: [{ discordId: did(1), username: "Ann", avatarUrl: "", status: "pending", place: null }] };
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const u = new URL(String(url));
+        const headers = init?.headers as Record<string, string>;
+        const body = typeof init?.body === "string" ? init.body : "";
+        if (!verify("lsec", body, headers["X-Hub-Timestamp"], headers["X-Hub-Signature"])) return new Response("{}", { status: 401 });
+        calls.push(`${init?.method} ${u.pathname} ${body}`);
+        return Response.json(u.pathname === "/api/integration/events" ? [ev] : lobby);
+      }),
+    );
+    await syncGame(game);
+    const { id } = db.prepare(`SELECT id FROM events WHERE game_id = ? AND external_id = '5'`).get(game.id) as { id: number };
+    expect(getEvent(id)).toMatchObject({ access: "closed", pending: 1 });
+
+    const admin = startSession({ discordId: "100", username: "Admin", avatar: null });
+    const call = (method: "GET" | "POST" | "PUT", url: string, payload?: object) => app.inject({ method, url, payload, cookies: { hub_sid: admin.token } });
+    expect((await call("GET", `/api/events/${id}/players`)).json()).toEqual(lobby);
+    expect((await call("POST", `/api/events/${id}/players/${did(1)}/approve`, {})).statusCode).toBe(200);
+    expect((await call("POST", `/api/events/${id}/players/${did(1)}/kick`, {})).statusCode).toBe(200);
+    expect((await call("PUT", `/api/events/${id}/access`, { access: "open" })).statusCode).toBe(200);
+    expect(calls).toContain(`POST /api/integration/events/5/players/${did(1)}/approve {}`);
+    expect(calls).toContain(`POST /api/integration/events/5/players/${did(1)}/kick {}`);
+    expect(calls).toContain(`POST /api/integration/events/5/access {"access":"open"}`);
+    expect((await call("POST", `/api/events/${id}/players/${did(1)}/ban`, {})).statusCode).toBe(404);
+    expect((await call("PUT", `/api/events/${id}/access`, { access: "ajar" })).statusCode).toBe(400);
+  });
 });

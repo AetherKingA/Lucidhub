@@ -114,3 +114,16 @@ const sharedIpStmt = db.prepare(`
 export function usersSharingIp(userId: number): number[] {
   return (sharedIpStmt.all(userId) as { userId: number }[]).map((r) => r.userId);
 }
+
+const userByDiscordStmt = db.prepare(`SELECT id, discord_id, username, avatar, banned FROM users WHERE discord_id = ?`);
+const discordIdStmt = db.prepare(`SELECT discord_id FROM users WHERE id = ?`);
+
+/** The site account for a Discord account, for the hub (which only knows Discord IDs). */
+export function findUserByDiscordId(discordId: string): User | null {
+  const r = userByDiscordStmt.get(discordId) as UserRow | undefined;
+  return r ? toUser(r) : null;
+}
+
+export function discordIdOf(userId: number): string | null {
+  return (discordIdStmt.get(userId) as { discord_id: string } | undefined)?.discord_id ?? null;
+}

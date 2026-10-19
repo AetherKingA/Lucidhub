@@ -66,7 +66,7 @@ describe("signatures", () => {
     const info = res.json();
     expect(info).toMatchObject({ key: "chess", name: "Chess Night" });
     expect(info.fields.map((f: { name: string }) => f.name)).toEqual([
-      "name", "startTime", "maxPlayers", "winsToAdvance", "timeControl",
+      "name", "startTime", "access", "maxPlayers", "winsToAdvance", "timeControl",
     ]);
     expect(info.fields.find((f: { name: string }) => f.name === "timeControl").options.map((o: { value: string }) => o.value)).toContain("5+3");
   });
@@ -148,8 +148,9 @@ describe("events", () => {
     }
     expect(t.meta.status).toBe("finished");
 
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0]!;
+    const finishedCalls = fetchMock.mock.calls.filter(([, i]) => JSON.parse(i.body as string).type === "event.finished");
+    expect(finishedCalls).toHaveLength(1);
+    const [url, init] = finishedCalls[0]!;
     expect(url).toBe("http://hub.test/api/games/chess/webhook");
     const headers = init.headers as Record<string, string>;
     expect(JSON.parse(init.body as string)).toEqual({ type: "event.finished", externalId: ev.id });
@@ -202,5 +203,63 @@ describe("options from the hub", () => {
     expect(manager.get(Number(ok.json().id))!.config).toMatchObject({ maxPlayers: 30, winsToAdvance: 3, minutes: 10, incrementSeconds: 5 });
     const odd = await hub("POST", "/api/integration/events", { name: "Odd", winsToAdvance: 7, timeControl: "7+7", maxPlayers: 99999 });
     expect(manager.get(Number(odd.json().id))!.config).toMatchObject({ winsToAdvance: 1, minutes: 5, incrementSeconds: 3, maxPlayers: 1024 });
+  });
+});
+
+describe("lobby", () => {
+  const statuses = (lobby: { players: { discordId: string; status: string }[] }) => lobby.players.map((p) => `${p.discordId}:${p.status}`).sort();
+
+  it("a closed lobby queues join requests; the hub lets players in, turns them down, kicks them and opens it", async () => {
+    const ev = (await hub("POST", "/api/integration/events", { name: "Invite only", startTime: Date.now() + 3_600_000, access: "closed" })).json();
+    expect(ev).toMatchObject({ access: "closed", pending: 0, entrants: 0 });
+    const t = manager.get(Number(ev.id))!;
+    const [a, b, c] = ["7001", "7002", "7003"].map((d, i) => upsertUser(d, `lobby${i}`, null));
+    for (const u of [a!, b!, c!]) t.register({ id: u.id, username: u.username, avatarUrl: "" }, Date.now());
+    expect(t.entrantCount).toBe(0);
+    expect(t.summary(a!.id).me).toMatchObject({ registered: false, pending: true, removed: false });
+    expect(t.summary(null)).toMatchObject({ access: "closed" });
+
+    let res = await hub("GET", `/api/integration/events/${ev.id}/players`);
+    expect(res.json().access).toBe("closed");
+    expect(statuses(res.json())).toEqual(["7001:pending", "7002:pending", "7003:pending"]);
+    expect((await hub("GET", "/api/integration/events")).json().find((e: { id: string }) => e.id === ev.id)).toMatchObject({ pending: 3 });
+
+    res = await hub("POST", `/api/integration/events/${ev.id}/players/7001/approve`, {});
+    expect(res.statusCode).toBe(200);
+    res = await hub("POST", `/api/integration/events/${ev.id}/players/7002/deny`, {});
+    expect(statuses(res.json())).toEqual(["7001:registered", "7003:pending"]);
+    expect(t.entrantCount).toBe(1);
+
+    // Kicked players leave the field and can't come back.
+    res = await hub("POST", `/api/integration/events/${ev.id}/players/7001/kick`, {});
+    expect(statuses(res.json())).toEqual(["7003:pending"]);
+    expect(() => t.register({ id: a!.id, username: a!.username, avatarUrl: "" }, Date.now())).toThrow(/removed/);
+    expect(t.summary(a!.id).me).toMatchObject({ removed: true });
+
+    // Opening the lobby lets in everyone still waiting.
+    res = await hub("POST", `/api/integration/events/${ev.id}/access`, { access: "open" });
+    expect(res.json().access).toBe("open");
+    expect(statuses(res.json())).toEqual(["7003:registered"]);
+
+    expect((await hub("POST", `/api/integration/events/${ev.id}/access`, { access: "ajar" })).statusCode).toBe(400);
+    expect((await hub("POST", `/api/integration/events/${ev.id}/players/7002/approve`, {})).statusCode).toBe(400);
+    expect((await hub("POST", `/api/integration/events/${ev.id}/players/9999999/kick`, {})).statusCode).toBe(404);
+    expect((await hub("POST", `/api/integration/events/${ev.id}/players/7003/ban`, {})).statusCode).toBe(404);
+  });
+
+  it("kicks a player out of a running tournament", async () => {
+    const ev = (await hub("POST", "/api/integration/events", { name: "Kick test", startTime: Date.now() + 3_600_000 })).json();
+    expect(ev.access).toBe("open");
+    const t = manager.get(Number(ev.id))!;
+    for (const [i, d] of ["7101", "7102", "7103"].entries()) {
+      const u = upsertUser(d, `kick${i}`, null);
+      t.register({ id: u.id, username: u.username, avatarUrl: "" }, Date.now());
+    }
+    expect((await hub("POST", `/api/integration/events/${ev.id}/start`, {})).statusCode).toBe(200);
+    const res = await hub("POST", `/api/integration/events/${ev.id}/players/7101/kick`, {});
+    expect(res.statusCode).toBe(200);
+    expect(res.json().players.find((p: { discordId: string }) => p.discordId === "7101").status).toBe("removed");
+    expect((await hub("POST", `/api/integration/events/${ev.id}/players/7101/kick`, {})).statusCode).toBe(400);
+    await hub("POST", `/api/integration/events/${ev.id}/cancel`, {});
   });
 });

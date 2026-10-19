@@ -3,7 +3,7 @@ import { fmtAgo, fmtTime, ordinal, useApi } from "./api.ts";
 import { AwardStatusPill, Empty, EventStatus, PageHeader, useHub } from "./ui.tsx";
 
 export function OverviewPage() {
-  const { data } = useApi<Overview>("/api/overview", 10_000);
+  const { data } = useApi<Overview>("/api/overview", 4000);
   const { games, bot, prizes } = useHub();
   const needsSetup = games.length === 0 || !bot?.configured || prizes.length === 0;
 

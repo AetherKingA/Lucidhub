@@ -56,7 +56,32 @@ export interface GameEvent {
   startedAt: number | null;
   finishedAt: number | null;
   url: string | null;
+  /** Optional: games that support closed lobbies report these. */
+  access?: LobbyAccess;
+  /** Join requests waiting for an admin (closed lobbies). */
+  pending?: number;
 }
+
+/** "open": anyone can join. "closed": players ask, and an admin approves each one. */
+export type LobbyAccess = "open" | "closed";
+
+export type PlayerStatus = "pending" | "registered" | "playing" | "waiting" | "out" | "removed";
+
+export interface GamePlayer {
+  discordId: string;
+  username: string;
+  avatarUrl: string;
+  status: PlayerStatus;
+  place: number | null;
+}
+
+/** GET /api/integration/events/:id/players, and the answer to every lobby change. */
+export interface GameLobby {
+  access: LobbyAccess;
+  players: GamePlayer[];
+}
+
+export type PlayerAction = "approve" | "deny" | "kick";
 
 /** GET /api/integration/events/:id/results */
 export interface GameResults {
@@ -131,6 +156,9 @@ export interface HubEvent {
   entrants: number;
   maxPlayers: number | null;
   url: string | null;
+  /** Null when the game doesn't support closed lobbies. */
+  access: LobbyAccess | null;
+  pending: number;
   announceChannelId: string | null;
   processedAt: number | null;
   rules: PrizeRule[];

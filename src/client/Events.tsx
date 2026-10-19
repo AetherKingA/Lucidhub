@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Award, BlindLevel, GameField, GameInfo, GameOp, HubEvent, PrizeRule } from "../shared/protocol.ts";
+import type { Award, BlindLevel, GameField, GameInfo, GameLobby, GameOp, GamePlayer, HubEvent, LobbyAccess, PlayerAction, PrizeRule } from "../shared/protocol.ts";
 import { api, fmtAgo, fmtTime, ordinal, placeLabel, useApi } from "./api.ts";
 import { BlindEditor, levelProblems } from "./Blinds.tsx";
 import { navigate } from "./router.ts";
@@ -9,7 +9,7 @@ import { AwardStatusPill, ChannelPicker, Empty, EventStatus, LadderEditor, PageH
 
 export function EventsPage() {
   const [status, setStatus] = useState("");
-  const { data } = useApi<HubEvent[]>(`/api/events${status ? `?status=${status}` : ""}`);
+  const { data } = useApi<HubEvent[]>(`/api/events${status ? `?status=${status}` : ""}`, 4000);
   const { games } = useHub();
   const { busy, run } = useAction();
 
@@ -64,6 +64,8 @@ export function EventsPage() {
                   <td>
                     {e.entrants}
                     {e.maxPlayers ? <span className="muted">/{e.maxPlayers}</span> : null}
+                    {e.access === "closed" && e.status === "registering" && <span className="muted small"> · closed</span>}
+                    {e.pending > 0 && <> <span className="pill warnpill">{e.pending} waiting</span></>}
                   </td>
                   <td>{e.rules.length ? <PrizeSummary e={e} /> : <span className="pill warnpill">None</span>}</td>
                   <td>
@@ -264,7 +266,7 @@ export function NewEventPage() {
 type EventDetail = HubEvent & { awards: Award[] };
 
 export function EventPage({ id }: { id: number }) {
-  const { data, error, reload } = useApi<EventDetail>(`/api/events/${id}`, 8000);
+  const { data, error, reload } = useApi<EventDetail>(`/api/events/${id}`, 4000);
   const [rules, setRules] = useState<PrizeRule[] | null>(null);
   const { busy, run } = useAction();
 
@@ -314,6 +316,8 @@ export function EventPage({ id }: { id: number }) {
           </button>
         )}
       </PageHeader>
+
+      {data.access !== null && (data.status === "registering" || data.status === "running") && <LobbyPanel event={data} onChange={reload} />}
 
       <section className="card">
         <div className="row between">
@@ -374,6 +378,138 @@ export function EventPage({ id }: { id: number }) {
         )}
       </section>
     </>
+  );
+}
+
+// ---------------------------------------------------------------- lobby
+
+const PLAYER_STATUS: Record<GamePlayer["status"], string> = {
+  pending: "Wants to join",
+  registered: "Registered",
+  playing: "Playing",
+  waiting: "Waiting for next round",
+  out: "Out",
+  removed: "Kicked",
+};
+
+/** Open or closed lobby, join requests to let in, and kicking players. Live: re-read every few seconds. */
+function LobbyPanel({ event, onChange }: { event: HubEvent; onChange: () => Promise<void> }) {
+  const { data, error, reload } = useApi<GameLobby>(`/api/events/${event.id}/players`, 3000);
+  const [shown, setShown] = useState<GameLobby | null>(null);
+  const { busy, run } = useAction();
+  useEffect(() => {
+    if (data) setShown(data);
+  }, [data]);
+
+  const change = (path: string, init: { method?: string; body: unknown }, label: string) =>
+    run(async () => {
+      setShown(await api<GameLobby>(path, init));
+      await Promise.all([reload(), onChange()]);
+    }, label);
+
+  const setAccess = (access: LobbyAccess) => {
+    if (!shown || access === shown.access) return;
+    const waiting = shown.players.filter((p) => p.status === "pending").length;
+    if (access === "open" && waiting && !confirm(`Open the lobby? The ${waiting} player${waiting === 1 ? "" : "s"} waiting will be let in.`)) return;
+    void change(`/api/events/${event.id}/access`, { method: "PUT", body: { access } }, access === "open" ? "Lobby is open" : "Lobby is closed");
+  };
+
+  const act = (p: GamePlayer, action: PlayerAction) => {
+    if (action === "kick" && !confirm(`Kick ${p.username} from "${event.name}"? They won't be able to join it again.`)) return;
+    void change(
+      `/api/events/${event.id}/players/${p.discordId}/${action}`,
+      { body: {} },
+      action === "approve" ? `${p.username} is in` : action === "deny" ? `Turned down ${p.username}` : `Kicked ${p.username}`,
+    );
+  };
+
+  if (error && !shown)
+    return (
+      <section className="card">
+        <h3>Lobby</h3>
+        <p className="error">{error}</p>
+      </section>
+    );
+
+  const players = shown?.players ?? [];
+  const pending = players.filter((p) => p.status === "pending");
+  const inEvent = players.filter((p) => p.status !== "pending");
+  const active = inEvent.filter((p) => p.status === "registered" || p.status === "playing" || p.status === "waiting").length;
+
+  return (
+    <section className="card">
+      <div className="row between">
+        <h3>Lobby</h3>
+        <span className="muted small">
+          {active}
+          {event.maxPlayers ? `/${event.maxPlayers}` : ""} {event.status === "running" ? "still in" : "registered"} · live
+        </span>
+      </div>
+      {event.status === "registering" && (
+        <div className="seg">
+          <button className={shown?.access === "open" ? "active" : ""} disabled={busy || !shown} onClick={() => setAccess("open")}>
+            Open
+            <small>Anyone can join</small>
+          </button>
+          <button className={shown?.access === "closed" ? "active" : ""} disabled={busy || !shown} onClick={() => setAccess("closed")}>
+            Closed
+            <small>You approve each player</small>
+          </button>
+        </div>
+      )}
+
+      {pending.length > 0 && (
+        <>
+          <h4>Asking to join ({pending.length})</h4>
+          <ul className="list">
+            {pending.map((p) => (
+              <li key={p.discordId}>
+                <PlayerName p={p} />
+                <button className="btn primary small-btn" disabled={busy} onClick={() => act(p, "approve")}>
+                  Let in
+                </button>
+                <button className="btn ghost small-btn" disabled={busy} onClick={() => act(p, "deny")}>
+                  Turn down
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {shown?.access === "closed" && pending.length === 0 && event.status === "registering" && (
+        <p className="muted small">Nobody is waiting. Players who ask to join show up here for you to let in.</p>
+      )}
+
+      <h4>Players ({inEvent.length})</h4>
+      {!shown ? (
+        <p className="muted">Asking {event.gameName}…</p>
+      ) : inEvent.length === 0 ? (
+        <Empty>Nobody has joined yet.</Empty>
+      ) : (
+        <ul className="list">
+          {inEvent.map((p) => (
+            <li key={p.discordId || p.username} className={p.status === "out" || p.status === "removed" ? "dim" : ""}>
+              <PlayerName p={p} />
+              <span className="muted small">{p.place !== null && p.status !== "removed" ? ordinal(p.place) : PLAYER_STATUS[p.status]}</span>
+              {(p.status === "registered" || p.status === "playing" || p.status === "waiting") && p.discordId && (
+                <button className="link danger" disabled={busy} onClick={() => act(p, "kick")}>
+                  Kick
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function PlayerName({ p }: { p: GamePlayer }) {
+  return (
+    <strong className="player">
+      {p.avatarUrl && <img src={p.avatarUrl} alt="" width={22} height={22} />}
+      {p.username}
+    </strong>
   );
 }
 

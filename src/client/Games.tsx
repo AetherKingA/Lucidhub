@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import type { GameInfo, GameRow, ServerState, ServerStatus } from "../shared/protocol.ts";
+import type { GameInfo, GameRow, HubEvent, ServerState, ServerStatus } from "../shared/protocol.ts";
 import { api, fmtAgo, useApi } from "./api.ts";
-import { Empty, PageHeader, useAction, useHub } from "./ui.tsx";
+import { Empty, EventStatus, PageHeader, useAction, useHub } from "./ui.tsx";
 
 export function GamesPage() {
   const { loaded, games, reload } = useHub();
   const [adding, setAdding] = useState(false);
   const servers = useApi<ServerStatus[]>("/api/servers", 3000);
+  // Open and running events, for each game's live player counts.
+  const events = useApi<HubEvent[]>("/api/events", 4000);
+  const active = (events.data ?? []).filter((e) => e.status === "registering" || e.status === "running");
 
   useEffect(() => {
     if (loaded && games.length === 0) setAdding(true);
@@ -33,7 +36,13 @@ export function GamesPage() {
         <Empty>No games connected.</Empty>
       ) : (
         games.map((g) => (
-          <GameCard key={g.id} game={g} server={servers.data?.find((s) => s.gameId === g.id) ?? null} onServerChange={() => void servers.reload()} />
+          <GameCard
+            key={g.id}
+            game={g}
+            server={servers.data?.find((s) => s.gameId === g.id) ?? null}
+            events={active.filter((e) => e.gameId === g.id)}
+            onServerChange={() => void servers.reload()}
+          />
         ))
       )}
     </>
@@ -214,7 +223,7 @@ const STATE_LABEL: Record<ServerState, string> = {
   crashed: "Crashed",
 };
 
-function GameCard({ game, server, onServerChange }: { game: GameRow; server: ServerStatus | null; onServerChange: () => void }) {
+function GameCard({ game, server, events, onServerChange }: { game: GameRow; server: ServerStatus | null; events: HubEvent[]; onServerChange: () => void }) {
   const { reload } = useHub();
   const [info, setInfo] = useState<GameInfo | null>(null);
   const [editing, setEditing] = useState(false);
@@ -272,6 +281,7 @@ function GameCard({ game, server, onServerChange }: { game: GameRow; server: Ser
         </div>
       </div>
       {info && <p className="muted small">Game reports: {info.name}, {info.fields.length} event options.</p>}
+      {events.length > 0 && <LivePlayers events={events} />}
 
       <div className="server">
         <div className="row between">
@@ -334,6 +344,36 @@ function GameCard({ game, server, onServerChange }: { game: GameRow; server: Ser
         {showLog && managed && <ServerLog gameId={game.id} />}
       </div>
     </section>
+  );
+}
+
+/** Players in each of the game's open and running events. Updates as people join, get knocked out or are kicked. */
+function LivePlayers({ events }: { events: HubEvent[] }) {
+  const playing = events.filter((e) => e.status === "running").reduce((n, e) => n + e.entrants, 0);
+  const registered = events.filter((e) => e.status === "registering").reduce((n, e) => n + e.entrants, 0);
+  return (
+    <div className="server">
+      <div className="row">
+        <strong>Players</strong>
+        <span className="muted small">
+          {playing} in live events · {registered} registered for upcoming ones
+        </span>
+      </div>
+      <ul className="list">
+        {events.map((e) => (
+          <li key={e.id}>
+            <a href={`#/events/${e.id}`}>{e.name}</a>
+            <span className="small">
+              {e.entrants}
+              {e.maxPlayers ? <span className="muted">/{e.maxPlayers}</span> : null} players
+            </span>
+            {e.pending > 0 && <span className="pill warnpill">{e.pending} waiting to be let in</span>}
+            {e.access === "closed" && e.status === "registering" && <span className="muted small">closed lobby</span>}
+            <EventStatus status={e.status} />
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

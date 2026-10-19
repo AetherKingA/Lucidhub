@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
-import type { GameOp, Overview, PrizeRule } from "../shared/protocol.ts";
+import type { GameOp, LobbyAccess, Overview, PlayerAction, PrizeRule } from "../shared/protocol.ts";
 import { AwardActionError, cancelAward, fillWaitingAwards, awardEvent, listAwards, markAwardManual, resendAward } from "./awards.ts";
 import { adminFromRequest, requireAdmin } from "./auth.ts";
 import { BlindPresetError, deleteBlindPreset, listBlindPresets, saveBlindPreset } from "./blindPresets.ts";
@@ -40,6 +40,8 @@ import { verify } from "./signing.ts";
 import { syncAll, syncGame } from "./sync.ts";
 
 const OPS = new Set<GameOp>(["start", "pause", "resume", "cancel"]);
+const PLAYER_ACTIONS = new Set<PlayerAction>(["approve", "deny", "kick"]);
+const ACTION_WORDS: Record<PlayerAction, string> = { approve: "player approved", deny: "join request turned down", kick: "player kicked" };
 const SNOWFLAKE = /^\d{5,25}$/;
 
 const id = (req: FastifyRequest) => Number((req.params as { id: string }).id);
@@ -210,6 +212,47 @@ export function registerRoutes(app: FastifyInstance, bot: Bot, servers: ProcessM
     audit(actor(req), `event ${op}`, ev.name);
     if (updated.status === "finished" || updated.status === "cancelled") void syncGame(g);
     return getEvent(ev.id);
+  });
+
+  // ---------------------------------------------------------------- lobby: open/closed, join requests, kicks
+
+  /** Asks the game who's in the event. 404 = the game doesn't support lobby controls. */
+  app.get("/api/events/:id/players", async (req, reply) => {
+    const ev = getEvent(id(req));
+    if (!ev) return reply.code(404).send({ error: "Event not found" });
+    try {
+      return await gameClient.players(getGame(ev.gameId)!, ev.externalId);
+    } catch (err) {
+      if (err instanceof GameRequestError && err.status === 404 && ev.access === null)
+        return reply.code(404).send({ error: `${ev.gameName} doesn't support lobby controls yet` });
+      throw err;
+    }
+  });
+
+  app.put<{ Body: { access?: LobbyAccess } }>("/api/events/:id/access", async (req, reply) => {
+    const ev = getEvent(id(req));
+    if (!ev) return reply.code(404).send({ error: "Event not found" });
+    const access = req.body?.access;
+    if (access !== "open" && access !== "closed") return reply.code(400).send({ error: "Pick open or closed" });
+    const g = getGame(ev.gameId)!;
+    const lobby = await gameClient.setAccess(g, ev.externalId, access);
+    audit(actor(req), `lobby ${access}`, ev.name);
+    void syncGame(g);
+    return lobby;
+  });
+
+  app.post<{ Params: { id: string; discordId: string; action: string } }>("/api/events/:id/players/:discordId/:action", async (req, reply) => {
+    const ev = getEvent(id(req));
+    if (!ev) return reply.code(404).send({ error: "Event not found" });
+    const action = req.params.action as PlayerAction;
+    if (!PLAYER_ACTIONS.has(action)) return reply.code(404).send({ error: "Unknown action" });
+    if (!SNOWFLAKE.test(req.params.discordId)) return reply.code(400).send({ error: "Unknown player" });
+    const g = getGame(ev.gameId)!;
+    const lobby = await gameClient.playerAction(g, ev.externalId, req.params.discordId, action);
+    const who = lobby.players.find((p) => p.discordId === req.params.discordId)?.username ?? req.params.discordId;
+    audit(actor(req), ACTION_WORDS[action], `${ev.name}: ${who}`);
+    void syncGame(g);
+    return lobby;
   });
 
   // ---------------------------------------------------------------- prizes

@@ -31,8 +31,14 @@ export interface TournamentSummary {
   totalRounds: number;
   activeTables: number;
   registrationOpen: boolean;
+  /** "closed": registering sends a join request that an admin approves. */
+  access: "open" | "closed";
   me: {
     registered: boolean;
+    /** Asked to join a closed lobby; waiting for an admin. */
+    pending: boolean;
+    /** An admin removed them from this tournament. */
+    removed: boolean;
     tableId: number | null;
     place: number | null;
     round: number;

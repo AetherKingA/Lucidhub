@@ -1,6 +1,6 @@
 import type { TournamentDetail, TournamentSummary } from "../../shared/protocol.ts";
 import { usersSharingIp } from "../db.ts";
-import { notifyHubEventFinished } from "../integration.ts";
+import { notifyHubEventChanged, notifyHubEventFinished } from "../integration.ts";
 import { insertTournament, loadTournaments, saveBatch, saveResult } from "./store.ts";
 import { MAX_PLAYERS, TABLE_SIZES, WINS_TO_ADVANCE, defaultConfig } from "./structure.ts";
 import { Tournament, type TournamentHooks } from "./tournament.ts";
@@ -23,6 +23,8 @@ export interface Notifier {
 export interface CreateOptions {
   name: string;
   startTime: number;
+  /** "closed": players ask to join and an admin approves each one. */
+  access?: string;
   maxPlayers?: number;
   tableSize?: number;
   winsToAdvance?: number;
@@ -94,6 +96,7 @@ export class TournamentManager {
     };
     const id = insertTournament(now);
     const t = Tournament.create(id, config, now, this.hooksFor(id));
+    if (opts.access === "closed") t.meta.access = "closed";
     this.tournaments.set(id, t);
     this.dirtyMeta.add(id);
     this.scheduleFlush();
@@ -185,7 +188,11 @@ export class TournamentManager {
       isConnected: (userId) => n.isConnected(userId),
       tableChanged: (tableId) => n.tableChanged(tournamentId, tableId),
       tableClosed: (tableId) => n.tableClosed(tournamentId, tableId),
-      lobbyChanged: () => n.lobbyChanged(),
+      lobbyChanged: () => {
+        n.lobbyChanged();
+        // Keeps the hub's player counts and lobby panel live.
+        notifyHubEventChanged(tournamentId);
+      },
       playerMoved: (userId, tableId) => n.playerMoved(tournamentId, userId, tableId),
       playerAdvanced: (userId, round) => n.playerAdvanced(tournamentId, userId, round, this.tournaments.get(tournamentId)?.meta.totalRounds ?? round),
       playerFinished: (userId, place) => {

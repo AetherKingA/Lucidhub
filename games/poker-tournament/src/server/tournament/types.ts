@@ -41,6 +41,17 @@ export type ChipMode = "fair" | "bully";
 
 export type TournamentStatus = "registering" | "running" | "finished" | "cancelled";
 
+/** "open": anyone can register. "closed": players ask to join and an admin lets each one in. */
+export type LobbyAccess = "open" | "closed";
+
+/** Someone who asked to join a closed lobby. */
+export interface PendingEntrant {
+  userId: number;
+  username: string;
+  avatarUrl: string;
+  requestedAt: number;
+}
+
 export interface Entrant {
   userId: number;
   username: string;
@@ -98,6 +109,12 @@ export interface TournamentMeta {
   pausedAt: number | null;
   /** Keyed by user id. */
   entrants: Record<string, Entrant>;
+  /** Missing on tournaments saved before lobbies could be closed: those are open. */
+  access?: LobbyAccess;
+  /** Join requests waiting for an admin (closed lobbies), keyed by user id. */
+  pending?: Record<string, PendingEntrant>;
+  /** Players an admin removed. They can't register again, and leave their next table as soon as they reach it. */
+  kicked?: number[];
   /** Players not yet knocked out (seated or waiting for their next table). */
   remaining: number;
   /** Indexed by node id. Empty until the start. */
