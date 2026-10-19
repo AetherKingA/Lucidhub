@@ -14,7 +14,7 @@ db.exec(`
   PRAGMA synchronous = NORMAL;
   PRAGMA foreign_keys = ON;
 
-  -- Game sites that plug into the hub (poker now, chess later). See INTEGRATION.md.
+  -- Game sites that plug into the hub, one row per game. See INTEGRATION.md.
   CREATE TABLE IF NOT EXISTS games (
     id          INTEGER PRIMARY KEY,
     key         TEXT NOT NULL UNIQUE,

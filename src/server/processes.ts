@@ -1,4 +1,4 @@
-// Runs game servers (Poker Night, later chess…) as background processes of the hub, so starting the
+// Runs each game's server as a background process of the hub, so starting the
 // hub starts everything. Each game with a launch folder + command can be started, stopped and
 // restarted from the dashboard; games set to start with the hub are restarted if they crash.
 

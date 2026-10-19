@@ -173,6 +173,11 @@ describe("suggestedLaunch", () => {
     expect(suggestedLaunch("checkers")).toBeNull();
     expect(suggestedLaunch("toString")).toBeNull();
   });
+
+  it("lists the known games for the Connect a game picker", async () => {
+    const { knownGameKeys } = await import("../src/server/games.ts");
+    expect(knownGameKeys()).toEqual(["poker", "uno", "chess"]);
+  });
 });
 
 describe("gameEnvFor", () => {

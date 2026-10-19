@@ -15,6 +15,7 @@ import {
   gameSecret,
   getGame,
   getGameByKey,
+  knownGameKeys,
   listGames,
   publicGame,
   suggestedLaunch,
@@ -109,7 +110,10 @@ export function registerRoutes(app: FastifyInstance, bot: Bot, servers: ProcessM
     return publicGame(g);
   });
 
-  /** Launch settings to pre-fill when connecting a known game (Poker Night next to the hub). */
+  /** The games in the hub's games/ folder that the dashboard can fill in by itself. */
+  app.get("/api/games/known", async () => knownGameKeys());
+
+  /** Launch settings to pre-fill when connecting a known game (one in the hub's games/ folder). */
   app.get<{ Querystring: { key?: string } }>("/api/games/suggest", async (req) => suggestedLaunch(String(req.query.key ?? "")) ?? {});
 
   // ---------------------------------------------------------------- game servers
