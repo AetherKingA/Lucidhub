@@ -90,3 +90,62 @@ describe("what players are sent", () => {
     }
   });
 });
+
+describe("host view (admins who aren't playing see every hand)", () => {
+  const ADMIN = 99;
+  const admin = { id: ADMIN, isAdmin: true };
+
+  it("is only for admins with no stake in the tournament, and only while it runs", () => {
+    const t = Tournament.create(1, defaultConfig({ startTime: 1000 }), 0, { ...noopHooks });
+    for (let i = 1; i <= 7; i++) t.register({ id: i, username: `p${i}`, avatarUrl: "" }, 0);
+    // Registering: nobody, not even an outside admin.
+    expect(t.canSeeAllCards(admin)).toBe(false);
+    t.tick(1000);
+    expect(t.meta.status).toBe("running");
+    expect(t.canSeeAllCards(admin)).toBe(true);
+    expect(t.canSeeAllCards({ id: ADMIN, isAdmin: false })).toBe(false);
+    // An admin who is seated, waiting for their next table, or asked to join can't.
+    expect(t.canSeeAllCards({ id: 1, isAdmin: true })).toBe(false);
+    const e = t.meta.entrants[2]!;
+    e.tableId = null;
+    e.advancedTo = 99;
+    expect(t.canSeeAllCards({ id: 2, isAdmin: true })).toBe(false);
+    t.meta.pending = { [ADMIN]: { userId: ADMIN, username: "a", avatarUrl: "", requestedAt: 0 } as never };
+    expect(t.canSeeAllCards(admin)).toBe(false);
+    delete t.meta.pending[ADMIN];
+    // Knocked out: they're a spectator like any other admin.
+    e.place = 7;
+    expect(t.canSeeAllCards({ id: 2, isAdmin: true })).toBe(true);
+    t.meta.status = "finished";
+    expect(t.canSeeAllCards(admin)).toBe(false);
+  });
+
+  it("returns nothing for anyone who isn't allowed it", () => {
+    const { t, tb } = startTable(6);
+    expect(t.hostView(tb.id, { id: 1, isAdmin: true }, 0)).toBeNull();
+    expect(t.hostView(tb.id, { id: ADMIN, isAdmin: false }, 0)).toBeNull();
+    expect(t.hostView(tb.id, admin, 0)).not.toBeNull();
+  });
+
+  it("shows every dealt hand, folded ones too, with no actions and no seat", () => {
+    const { t, tb } = startTable(3);
+    const folder = actor(tb);
+    t.act(folder, { type: "fold" }, 1);
+    const view = t.hostView(tb.id, admin, 1)!;
+    expect(view.hostView).toBe(true);
+    expect(view.legal).toBeNull();
+    expect(view.mySeat).toBeNull();
+    for (const seat of view.seats) if (seat) expect(seat.holeCards).toEqual(cardsOf(tb, seat.userId));
+    // Everyone else's view is unchanged.
+    expect(t.tableView(tb.id, null, 1)!.hostView).toBe(false);
+    expect(t.tableView(tb.id, null, 1)!.seats.find((s) => s?.userId === folder)!.holeCards).toEqual([]);
+  });
+
+  it("never sends the deck or undealt cards", () => {
+    const { t, tb } = startTable(6);
+    const h = tb.hand!;
+    const json = JSON.stringify(t.hostView(tb.id, admin, 0));
+    expect(json).not.toMatch(/"deck"/);
+    for (const card of h.deck.slice(h.deckPos)) expect(json).not.toContain(`"${card}"`);
+  });
+});

@@ -127,9 +127,15 @@ function TournamentCard({ t }: { t: TournamentSummary }) {
             {t.access === "closed" ? "Ask to join" : "Register"}
           </button>
         ) : null}
-        <button className="btn ghost" onClick={open}>
-          {t.status === "running" ? "Watch" : "Details"}
-        </button>
+        {t.status === "running" ? (
+          <button className={`btn ${me?.tableId != null ? "ghost" : "primary"}`} onClick={() => navigate(`/t/${t.id}/watch`)}>
+            👁 Watch live
+          </button>
+        ) : (
+          <button className="btn ghost" onClick={open}>
+            Details
+          </button>
+        )}
       </div>
     </div>
   );

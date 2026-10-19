@@ -21,7 +21,10 @@ export class TournamentError extends Error {}
 export interface TournamentHooks {
   isConnected(userId: number): boolean;
   tableChanged(tableId: number): void;
-  tableClosed(tableId: number): void;
+  /** winnerId: who won the table and moves on (null when nobody did, or the tournament ended). */
+  tableClosed(tableId: number, winnerId: number | null): void;
+  /** People watching a table who aren't seated at it. */
+  viewerCount(tableId: number): number;
   lobbyChanged(): void;
   playerMoved(userId: number, tableId: number): void;
   playerAdvanced(userId: number, round: number): void;
@@ -39,6 +42,7 @@ export const noopHooks: TournamentHooks = {
   isConnected: () => true,
   tableChanged: noop,
   tableClosed: noop,
+  viewerCount: () => 0,
   lobbyChanged: noop,
   playerMoved: noop,
   playerAdvanced: noop,
@@ -509,7 +513,7 @@ export class Tournament {
     if (t.hand) return;
     const left = t.seats.filter((s): s is SeatPlayer => s !== null);
     if (left.length > 1) return;
-    this.closeTable(t.id);
+    this.closeTable(t.id, left[0]?.userId ?? null);
     this.completeNode(this.node(t.id), left[0]?.userId ?? null, now, left[0]?.chips);
   }
 
@@ -666,9 +670,9 @@ export class Tournament {
     return -1;
   }
 
-  private closeTable(id: number) {
+  private closeTable(id: number, winnerId: number | null = null) {
     this.tables.delete(id);
-    this.hooks.tableClosed(id);
+    this.hooks.tableClosed(id, winnerId);
     this.hooks.dirty({ tableId: id, deleted: true });
   }
 
@@ -756,7 +760,32 @@ export class Tournament {
     };
   }
 
+  /** Still in contention: asked to join, registered, seated, or waiting for a next table. */
+  isStillPlaying(userId: number): boolean {
+    const m = this.meta;
+    if (m.status !== "registering" && m.status !== "running") return false;
+    if (m.pending?.[userId]) return true;
+    const e = m.entrants[userId];
+    return Boolean(e && e.place === null);
+  }
+
+  /** Host view: admins who aren't playing in this tournament see every hand while it runs. */
+  canSeeAllCards(viewer: { id: number; isAdmin: boolean }): boolean {
+    return viewer.isAdmin && this.meta.status === "running" && !this.isStillPlaying(viewer.id);
+  }
+
+  /** What a seated player (their own cards) or a spectator (viewerId null: no hidden cards) sees. */
   tableView(tableId: number, viewerId: number | null, now: number): TableView | null {
+    return this.buildView(tableId, viewerId, now, false);
+  }
+
+  /** Every hand face up, for an admin who isn't playing. Null for anyone else. */
+  hostView(tableId: number, viewer: { id: number; isAdmin: boolean }, now: number): TableView | null {
+    if (!this.canSeeAllCards(viewer)) return null;
+    return this.buildView(tableId, null, now, true);
+  }
+
+  private buildView(tableId: number, viewerId: number | null, now: number, reveal: boolean): TableView | null {
     const t = this.tables.get(tableId);
     if (!t) return null;
     const m = this.meta;
@@ -814,7 +843,7 @@ export class Tournament {
         allIn: p?.allIn ?? false,
         away: s.away,
         connected: this.hooks.isConnected(s.userId),
-        holeCards: !p || p.folded ? [] : s.userId === viewerId || shown ? p.holeCards : p.holeCards.map(() => "??"),
+        holeCards: !p ? [] : reveal ? p.holeCards : p.folded ? [] : s.userId === viewerId || shown ? p.holeCards : p.holeCards.map(() => "??"),
         lastAction: lastAction.get(pid) ?? null,
         won: payouts[pid] ?? 0,
         handName: shown?.handName ?? null,
@@ -853,6 +882,7 @@ export class Tournament {
       handComplete: complete,
       paused: m.paused,
       onBreak: c.phase === "break",
+      hostView: reveal,
       serverNow: now,
     };
   }
@@ -886,7 +916,7 @@ export class Tournament {
       }),
       tables: [...this.tables.values()]
         .sort((a, b) => b.round - a.round || a.id - b.id)
-        .map((t) => ({ id: t.id, round: t.round, players: occupiedCount(t), handNo: t.handNo })),
+        .map((t) => ({ id: t.id, round: t.round, players: occupiedCount(t), handNo: t.handNo, viewers: this.hooks.viewerCount(t.id) })),
       standings: [...alive, ...out].slice(0, 300).map((e) => ({
         userId: e.userId,
         username: e.username,

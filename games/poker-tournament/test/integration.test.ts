@@ -21,6 +21,7 @@ const notifier = {
   isConnected: () => true,
   tableChanged: () => {},
   tableClosed: () => {},
+  viewerCount: () => 0,
   lobbyChanged: () => {},
   playerMoved: () => {},
   playerAdvanced: () => {},
@@ -110,6 +111,8 @@ describe("events", () => {
     expect(ev).toMatchObject({ name: "Hub Cup", status: "registering", entrants: 0, maxPlayers: 6, startedAt: null, finishedAt: null });
     expect(typeof ev.id).toBe("string");
     expect(ev.url).toBe(`https://poker.example/#/t/${ev.id}`);
+    // The spectator link only exists while it's running.
+    expect(ev.watchUrl).toBeNull();
 
     const listed = await hub("GET", "/api/integration/events?status=registering");
     expect(listed.json().map((e: { id: string }) => e.id)).toContain(ev.id);
@@ -133,6 +136,7 @@ describe("events", () => {
     expect(started.statusCode).toBe(200);
     expect(started.json()).toMatchObject({ status: "running", entrants: 2 });
     expect(started.json().startedAt).toBeTypeOf("number");
+    expect(started.json().watchUrl).toBe(`https://poker.example/#/t/${ev.id}/watch`);
     expect((await hub("POST", `/api/integration/events/${ev.id}/pause`, {})).statusCode).toBe(200);
     expect(t.meta.paused).toBe(true);
     expect((await hub("POST", `/api/integration/events/${ev.id}/resume`, {})).statusCode).toBe(200);

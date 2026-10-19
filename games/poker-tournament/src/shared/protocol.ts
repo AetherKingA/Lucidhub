@@ -69,7 +69,7 @@ export interface SeatView {
   allIn: boolean;
   away: boolean;
   connected: boolean;
-  /** "??" for hidden cards. Empty when not dealt in. */
+  /** "??" for hidden cards. Empty when not dealt in. In host view: everyone's real cards, folded ones too. */
   holeCards: string[];
   lastAction: string | null;
   /** Set when the hand is over. */
@@ -111,6 +111,8 @@ export interface TableView {
   handComplete: boolean;
   paused: boolean;
   onBreak: boolean;
+  /** Sent to admins who aren't playing in this tournament: every hand is face up. */
+  hostView: boolean;
   serverNow: number;
 }
 
@@ -121,15 +123,32 @@ export interface TournamentDetail {
   breakMinutes: number;
   payouts: { place: number; percent: number; points: number }[];
   rounds: { round: number; tables: number; done: number; players: number }[];
-  tables: { id: number; round: number; players: number; handNo: number }[];
+  tables: { id: number; round: number; players: number; handNo: number; viewers: number }[];
   /** Players still in (furthest round first, then chips), then knocked-out players by place. */
   standings: { userId: number; username: string; round: number; chips: number; place: number | null; points: number; tableId: number | null }[];
 }
 
+// ---- Spectating. This block is the same in all three games (poker, Uno, chess).
+
+/** "table": the players' chat (spectators read it). "spectators": only people watching see it. */
+export type ChatChannel = "table" | "spectators";
+
+/** A spectator following one player through the tournament. */
+export interface FollowInfo {
+  userId: number;
+  username: string;
+  /** Their table now; null while they wait for their next one. */
+  tableId: number | null;
+  round: number;
+}
+
 export interface ChatMessage {
   id: number;
-  /** player = seated at this table, spectator = watching, dealer = hand results and table news. */
-  kind: "player" | "spectator" | "dealer";
+  /**
+   * player = seated at this table, spectator = watching, host = an admin who isn't seated here,
+   * dealer = hand results and table news.
+   */
+  kind: "player" | "spectator" | "host" | "dealer";
   userId: number | null;
   username: string;
   avatarUrl: string | null;
@@ -150,7 +169,11 @@ export type ServerMessage =
   | { type: "finished"; tournamentId: number; place: number; points: number }
   | { type: "advanced"; tournamentId: number; round: number; totalRounds: number }
   /** replace: the table's whole recent history (sent when you start watching); otherwise new messages. */
-  | { type: "chat"; tournamentId: number; tableId: number; messages: ChatMessage[]; replace: boolean };
+  | { type: "chat"; tournamentId: number; tableId: number; channel: ChatChannel; messages: ChatMessage[]; replace: boolean }
+  /** How many people (not seated there) are watching a table. */
+  | { type: "viewers"; tournamentId: number; tableId: number; count: number }
+  /** Who you're following in a tournament (null: nobody), with an optional note about what just happened. */
+  | { type: "follow"; tournamentId: number; following: FollowInfo | null; notice: string | null };
 
 export type ClientMessage =
   | { type: "ping"; t: number }
@@ -161,5 +184,7 @@ export type ClientMessage =
   | { type: "action"; tournamentId: number; action: Action }
   | { type: "back"; tournamentId: number }
   | { type: "sitOut"; tournamentId: number }
-  /** Say something at a table you're seated at or watching. */
-  | { type: "chat"; tournamentId: number; tableId: number; text: string };
+  /** Say something at a table you're seated at or watching. No channel: table if seated, else spectators. */
+  | { type: "chat"; tournamentId: number; tableId: number; channel?: ChatChannel; text: string }
+  /** Follow a player to each table they play at (null to stop). Spectators only. */
+  | { type: "follow"; tournamentId: number; userId: number | null };

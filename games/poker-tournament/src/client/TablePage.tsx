@@ -6,17 +6,30 @@ import { PlayingCard } from "./Cards.tsx";
 import { TableChat } from "./Chat.tsx";
 import { chips, formatClock, tableKey, useGame, useServerNow } from "./game.tsx";
 import { play } from "./sounds.ts";
+import { LiveTables, useTournamentDetail } from "./TournamentPage.tsx";
 import { useEquity } from "./useEquity.ts";
 
 export function TablePage({ tournamentId, tableId }: { tournamentId: number; tableId: number }) {
-  const { tables, chats, send, tournaments, status } = useGame();
-  const view = tables[tableKey(tournamentId, tableId)];
+  const { tables, chats, spectatorChats, viewers, follows, send, tournaments, status, user } = useGame();
+  const k = tableKey(tournamentId, tableId);
+  const view = tables[k];
   const summary = tournaments.find((t) => t.id === tournamentId);
   const [sound, setSound] = usePref("poker:sound", true);
   // On narrow screens the chat covers the table, so it starts closed there.
   const [chatOpen, setChatOpen] = usePref("poker:chat", typeof innerWidth === "number" && innerWidth >= 1100);
-  const messages = chats[tableKey(tournamentId, tableId)] ?? [];
-  const unread = useUnread(messages.length, chatOpen);
+  const messages = chats[k] ?? [];
+  const spectatorMessages = spectatorChats[k] ?? [];
+  const seated = view?.mySeat != null;
+  const unread = useUnread(messages.length + (seated ? 0 : spectatorMessages.length), chatOpen);
+  const watching = viewers[k] ?? 0;
+  const following = follows[tournamentId] ?? null;
+  const me = summary?.me;
+  const stillPlaying = Boolean(me && ((me.registered && me.place === null) || me.pending));
+  // Spectators who are out of (or never in) a running tournament can follow a player around.
+  const canFollow = Boolean(view && !seated && !stillPlaying && summary?.status === "running");
+  const follow = (userId: number | null) => send({ type: "follow", tournamentId, userId });
+  // The list of other tables, for when this one has finished.
+  const { detail } = useTournamentDetail(tournamentId, !view);
 
   // Subscribe while this page is open (own table is subscribed automatically anyway).
   useEffect(() => {
@@ -42,6 +55,19 @@ export function TablePage({ tournamentId, tableId }: { tournamentId: number; tab
           </a>
           <span className="table-name">Table {tableId}</span>
           {view && <LevelClock view={view} remaining={summary?.remaining ?? 0} />}
+          {watching > 0 && (
+            <span className="lc-pill muted" title="People watching this table">
+              👁 {watching} watching
+            </span>
+          )}
+          {following && (
+            <span className="lc-pill follow-chip">
+              Following <b>{following.username}</b>
+              <button className="link" onClick={() => follow(null)} title="Stop following">
+                ✕
+              </button>
+            </span>
+          )}
           <span className="head-tools">
             {myTable != null && myTable !== tableId && (
               <a className="btn primary small-btn" href={`#/t/${tournamentId}/table/${myTable}`}>
@@ -59,23 +85,48 @@ export function TablePage({ tournamentId, tableId }: { tournamentId: number; tab
             </button>
           </span>
         </div>
+        {view?.hostView && <div className="host-banner">👁 Host view: you can see every hand. Don't share what you see with players.</div>}
+        {view && !seated && user.isAdmin && stillPlaying && <div className="host-banner muted">Host view is off while you're playing in this tournament.</div>}
         {!view ? (
           <div className="center muted table-empty">
-            {summary?.me?.place === 1
-              ? "🏆 You won the tournament!"
-              : summary?.me?.waiting
-                ? `You won this table! You'll move to your round ${summary.me.waiting.round} table when the rest of your group finishes (${summary.me.waiting.groupDone}/${summary.me.waiting.groupSize} tables done).`
-                : summary?.status === "finished" || summary?.status === "cancelled"
-                  ? "This tournament is over."
-                  : "This table has finished (or is loading)."}
+            <p>
+              {summary?.me?.place === 1
+                ? "🏆 You won the tournament!"
+                : summary?.me?.waiting
+                  ? `You won this table! You'll move to your round ${summary.me.waiting.round} table when the rest of your group finishes (${summary.me.waiting.groupDone}/${summary.me.waiting.groupSize} tables done).`
+                  : summary?.status === "finished" || summary?.status === "cancelled"
+                    ? "This tournament is over."
+                    : following?.tableId === null
+                      ? `Waiting for ${following.username}'s next table (round ${following.round})…`
+                      : "This table has finished (or is loading)."}
+            </p>
+            {following?.tableId != null && following.tableId !== tableId && (
+              <a className="btn primary" href={`#/t/${tournamentId}/table/${following.tableId}`}>
+                Go to {following.username}'s table
+              </a>
+            )}
+            {summary?.status === "running" && detail && detail.tables.length > 0 && (
+              <>
+                <p className="small">Watch another table:</p>
+                <LiveTables t={summary} tables={detail.tables} except={tableId} />
+              </>
+            )}
           </div>
         ) : (
-          <Table view={view} sound={sound} />
+          <Table view={view} sound={sound} followingId={following?.userId ?? null} onFollow={canFollow ? follow : null} />
         )}
       </div>
       {chatOpen && (
         <aside className="chat-panel">
-          <TableChat tournamentId={tournamentId} tableId={tableId} messages={messages} canSend={Boolean(view)} onClose={() => setChatOpen(false)} />
+          <TableChat
+            tournamentId={tournamentId}
+            tableId={tableId}
+            messages={messages}
+            spectatorMessages={spectatorMessages}
+            seated={seated}
+            canSend={Boolean(view)}
+            onClose={() => setChatOpen(false)}
+          />
         </aside>
       )}
     </main>
@@ -206,7 +257,8 @@ function useTableSounds(view: TableView, enabled: boolean) {
   }, [myTurn, enabled, view.handNo, view.street, view.currentBet, view.actionDeadline, view.paused]);
 }
 
-function Table({ view, sound }: { view: TableView; sound: boolean }) {
+function Table(p: { view: TableView; sound: boolean; followingId: number | null; onFollow: ((userId: number | null) => void) | null }) {
+  const { view, sound } = p;
   const { send } = useGame();
   const n = view.tableSize;
   // Rotate so the viewer sits at the bottom.
@@ -258,6 +310,8 @@ function Table({ view, sound }: { view: TableView; sound: boolean }) {
                         handLabel={seatIdx === view.mySeat ? myHand : null}
                         equity={seatIdx === view.mySeat ? equity : null}
                         opponents={opponents}
+                        followed={p.followingId === s.userId}
+                        onFollow={p.onFollow}
                       />
                     ) : (
                       <div className="seat empty-seat">Open seat</div>
@@ -309,8 +363,17 @@ function ChipStack({ amount }: { amount: number }) {
   );
 }
 
-function Seat(p: { s: SeatView; view: TableView; isMe: boolean; handLabel: string | null; equity: Equity | null; opponents: number }) {
-  const { s, view, isMe, handLabel, equity } = p;
+function Seat(p: {
+  s: SeatView;
+  view: TableView;
+  isMe: boolean;
+  handLabel: string | null;
+  equity: Equity | null;
+  opponents: number;
+  followed: boolean;
+  onFollow: ((userId: number | null) => void) | null;
+}) {
+  const { s, view, isMe, handLabel, equity, followed, onFollow } = p;
   const acting = view.toActSeat === s.seat && !view.handComplete;
   const winner = view.handComplete && s.won > 0;
   return (
@@ -344,6 +407,15 @@ function Seat(p: { s: SeatView; view: TableView; isMe: boolean; handLabel: strin
         <div className={`tag act-${s.lastAction.split(" ")[0]!.toLowerCase().replace("-", "")}`}>{s.lastAction}</div>
       ) : null}
       {isMe && !winner && (handLabel || equity) && <MyRead label={handLabel} equity={equity} opponents={p.opponents} />}
+      {onFollow && (
+        <button
+          className={`follow-btn ${followed ? "on" : ""}`}
+          onClick={() => onFollow(followed ? null : s.userId)}
+          title={followed ? "Stop following" : `Follow ${s.username} to every table they play at`}
+        >
+          {followed ? "★ Following" : "☆ Follow"}
+        </button>
+      )}
     </div>
   );
 }

@@ -6,13 +6,12 @@ import { navigate } from "./router.ts";
 
 type Tab = "tables" | "standings" | "structure" | "payouts" | "admin";
 
-export function TournamentPage({ id }: { id: number }) {
-  const { tournaments, user, send } = useGame();
+/** The tournament's details (tables, standings…), refreshed every few seconds while `enabled`. */
+export function useTournamentDetail(id: number, enabled = true) {
+  const { tournaments } = useGame();
   const live = tournaments.find((t) => t.id === id);
   const [detail, setDetail] = useState<TournamentDetail | null>(null);
   const [missing, setMissing] = useState(false);
-  const [tab, setTab] = useState<Tab>("tables");
-  const now = useServerNow(1000);
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/tournaments/${id}`);
@@ -22,15 +21,31 @@ export function TournamentPage({ id }: { id: number }) {
 
   // Standings and tables change constantly while running; refresh every few seconds.
   useEffect(() => {
+    if (!enabled) return;
     load();
     const timer = setInterval(load, 5000);
     return () => clearInterval(timer);
-  }, [load]);
+  }, [load, enabled]);
 
   // Also refresh straight away when the live summary shows a knockout, a finished table or a new round.
   useEffect(() => {
-    if (live) load();
+    if (live && enabled) load();
   }, [live?.status, live?.remaining, live?.activeTables, live?.round]);
+
+  return { detail, missing, load };
+}
+
+export function TournamentPage({ id, watch = false }: { id: number; watch?: boolean }) {
+  const { tournaments, user, send } = useGame();
+  const live = tournaments.find((t) => t.id === id);
+  const { detail, missing, load } = useTournamentDetail(id);
+  const [tab, setTab] = useState<Tab>("tables");
+  const now = useServerNow(1000);
+
+  // "Watch live" links land on the tables.
+  useEffect(() => {
+    if (watch) setTab("tables");
+  }, [watch]);
 
   if (missing)
     return (
@@ -107,7 +122,7 @@ export function TournamentPage({ id }: { id: number }) {
         ))}
       </nav>
 
-      {detail && tab === "tables" && <TablesTab t={t} detail={detail} />}
+      {detail && tab === "tables" && <TablesTab t={t} detail={detail} watch={watch} />}
       {detail && tab === "standings" && <StandingsTab detail={detail} />}
       {detail && tab === "structure" && <StructureTab detail={detail} />}
       {detail && tab === "payouts" && <PayoutsTab detail={detail} />}
@@ -167,7 +182,7 @@ function OverviewPanel({ t, now }: { t: TournamentSummary; now: number }) {
   );
 }
 
-function TablesTab({ t, detail }: { t: TournamentSummary; detail: TournamentDetail }) {
+function TablesTab({ t, detail, watch }: { t: TournamentSummary; detail: TournamentDetail; watch: boolean }) {
   if (t.status === "registering")
     return (
       <p className="muted">
@@ -187,20 +202,31 @@ function TablesTab({ t, detail }: { t: TournamentSummary; detail: TournamentDeta
           </div>
         ))}
       </div>
+      {watch && detail.tables.length > 0 && <h3 className="section">👁 Pick a table to watch</h3>}
       {!detail.tables.length && <p className="muted">No tables in play.</p>}
-      <div className="table-grid">
-        {detail.tables.map((tb) => (
+      <LiveTables t={t} tables={detail.tables} />
+    </>
+  );
+}
+
+/** Tiles linking to every table in play, with how many people are watching each. */
+export function LiveTables({ t, tables, except }: { t: TournamentSummary; tables: TournamentDetail["tables"]; except?: number }) {
+  return (
+    <div className="table-grid">
+      {tables
+        .filter((tb) => tb.id !== except)
+        .map((tb) => (
           <a key={tb.id} className={`card table-tile ${t.me?.tableId === tb.id ? "mine" : ""}`} href={`#/t/${t.id}/table/${tb.id}`}>
             <b>
               Table {tb.id} <span className="muted small">· R{tb.round}</span>
             </b>
             <span className="muted small">
               {tb.players} left · hand #{tb.handNo}
+              {tb.viewers > 0 && ` · 👁 ${tb.viewers}`}
             </span>
           </a>
         ))}
-      </div>
-    </>
+    </div>
   );
 }
 
