@@ -5,6 +5,7 @@ import { describeHand } from "../shared/handName.ts";
 import { PlayingCard } from "./Cards.tsx";
 import { TableChat } from "./Chat.tsx";
 import { chips, formatClock, tableKey, useGame, useServerNow } from "./game.tsx";
+import { play } from "./sounds.ts";
 import { useEquity } from "./useEquity.ts";
 
 export function TablePage({ tournamentId, tableId }: { tournamentId: number; tableId: number }) {
@@ -47,7 +48,10 @@ export function TablePage({ tournamentId, tableId }: { tournamentId: number; tab
                 Back to my table
               </a>
             )}
-            <button className="icon-btn" onClick={() => setSound(!sound)} title={sound ? "Mute your-turn sound" : "Play a sound on your turn"}>
+            <button className="icon-btn" onClick={() => {
+                if (!sound) play("click");
+                setSound(!sound);
+              }} title={sound ? "Mute table sounds" : "Turn table sounds on"}>
               {sound ? "🔔" : "🔕"}
             </button>
             <button className="icon-btn chat-toggle" onClick={() => setChatOpen(!chatOpen)} title={chatOpen ? "Hide chat" : "Show chat"}>
@@ -139,31 +143,67 @@ function seatPosition(i: number, n: number) {
   };
 }
 
-/** A short chime when it becomes your turn. */
-function useTurnSound(myTurn: boolean, enabled: boolean, handNo: number) {
-  const ctx = useRef<AudioContext | null>(null);
+/**
+ * Sounds for everything that happens at the table, worked out by comparing each view with the last:
+ * cards dealt, board cards, every player's fold/check/call/bet/raise/all-in, bets swept into the pot,
+ * pots won, your turn, and a warning when your time is running out.
+ */
+function useTableSounds(view: TableView, enabled: boolean) {
+  const prev = useRef<TableView | null>(null);
+  const myTurn = Boolean(view.legal);
+  useEffect(() => {
+    const p = prev.current;
+    prev.current = view;
+    if (!enabled || !p || p.tableId !== view.tableId || p.tournamentId !== view.tournamentId) return;
+
+    const newHand = view.handNo !== p.handNo;
+    if (newHand && view.street) play("deal");
+    if (!newHand) {
+      // Bets swept into the pot when a street ends.
+      const hadBets = p.seats.some((s) => s && s.bet > 0);
+      if (view.street !== p.street && hadBets) play("collect", 0.8);
+      // Board cards, one after another (a flop is three flips).
+      const added = view.board.length - p.board.length;
+      for (let i = 0; i < added; i++) play("flip", 1, (hadBets ? 0.25 : 0) + i * 0.14);
+      // Every player's action. A new action changes the label or the amount in front of them.
+      view.seats.forEach((s, i) => {
+        const was = p.seats[i];
+        if (!s || !was || s.userId !== was.userId || !s.lastAction) return;
+        if (s.lastAction === was.lastAction && s.bet === was.bet && s.folded === was.folded) return;
+        const vol = i === view.mySeat ? 1 : 0.7;
+        const kind = s.lastAction.split(" ")[0]!.toLowerCase();
+        if (kind === "fold") play("fold", vol);
+        else if (kind === "check") play("check", vol);
+        else if (kind === "call") play("call", vol);
+        else if (kind === "bet") play("bet", vol);
+        else if (kind === "raise") play("raise", vol);
+        else if (kind === "all-in") play("allIn", vol);
+      });
+    }
+    // Hand over: a fanfare if you won, a softer one for someone else.
+    if (view.handComplete && (newHand || !p.handComplete)) {
+      const me = view.mySeat !== null ? view.seats[view.mySeat] : null;
+      if (me && me.won > 0) play("bigWin", 1, 0.3);
+      else if (view.seats.some((s) => s && s.won > 0)) play("win", 0.6, 0.3);
+    }
+  }, [view, enabled]);
+
+  // Your turn: a chime. Then a warning when you dip into your time bank, and ticks for the last 5 seconds.
   useEffect(() => {
     if (!myTurn || !enabled) return;
-    try {
-      ctx.current ??= new AudioContext();
-      const ac = ctx.current;
-      const now = ac.currentTime;
-      for (const [i, freq] of [660, 880].entries()) {
-        const o = ac.createOscillator();
-        const g = ac.createGain();
-        o.type = "sine";
-        o.frequency.value = freq;
-        g.gain.setValueAtTime(0.0001, now + i * 0.12);
-        g.gain.exponentialRampToValueAtTime(0.12, now + i * 0.12 + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.12 + 0.25);
-        o.connect(g).connect(ac.destination);
-        o.start(now + i * 0.12);
-        o.stop(now + i * 0.12 + 0.3);
-      }
-    } catch {
-      /* no audio */
-    }
-  }, [myTurn, enabled, handNo]);
+    play("turn");
+    if (view.paused || view.actionStartedAt === null || view.actionDeadline === null) return;
+    const skew = Date.now() - view.serverNow;
+    const timers: number[] = [];
+    const at = (serverTime: number, fn: () => void) => {
+      const ms = serverTime + skew - Date.now();
+      if (ms > 0) timers.push(window.setTimeout(fn, ms));
+    };
+    const bankStart = view.actionStartedAt + view.decisionMs;
+    if (bankStart < view.actionDeadline - 1000) at(bankStart, () => play("warn"));
+    for (let s = 5; s >= 1; s--) at(view.actionDeadline - s * 1000, () => play("tick", s <= 2 ? 1.4 : 1));
+    return () => timers.forEach(clearTimeout);
+  }, [myTurn, enabled, view.handNo, view.street, view.currentBet, view.actionDeadline, view.paused]);
 }
 
 function Table({ view, sound }: { view: TableView; sound: boolean }) {
@@ -172,8 +212,7 @@ function Table({ view, sound }: { view: TableView; sound: boolean }) {
   // Rotate so the viewer sits at the bottom.
   const rotation = view.mySeat ?? 0;
   const me = view.mySeat !== null ? view.seats[view.mySeat] : null;
-  const myTurn = Boolean(view.legal);
-  useTurnSound(myTurn, sound, view.handNo);
+  useTableSounds(view, sound);
   const totalPot = view.pot + view.seats.reduce((t, s) => t + (s?.bet ?? 0), 0);
   const myHand = me && !me.folded ? describeHand(me.holeCards, view.board) : null;
   // Win chance while the hand is live: against everyone still in, holding random cards.
@@ -241,12 +280,18 @@ function Table({ view, sound }: { view: TableView; sound: boolean }) {
       {me?.away && (
         <div className="away-bar">
           You're sitting out — you're folded automatically each hand and blinds are still posted.
-          <button className="btn primary" onClick={() => send({ type: "back", tournamentId: view.tournamentId })}>
+          <button
+            className="btn primary"
+            onClick={() => {
+              if (sound) play("click");
+              send({ type: "back", tournamentId: view.tournamentId });
+            }}
+          >
             I'm back
           </button>
         </div>
       )}
-      {me && !me.away && <ActionArea view={view} me={me} />}
+      {me && !me.away && <ActionArea view={view} me={me} sound={sound} />}
     </>
   );
 }
@@ -362,7 +407,7 @@ function TurnRing({ view }: { view: TableView }) {
 type PreAction = "checkFold" | "check" | "callAny" | null;
 
 /** Your controls: the big action buttons on your turn, otherwise pre-actions and sit out. */
-function ActionArea({ view, me }: { view: TableView; me: SeatView }) {
+function ActionArea({ view, me, sound }: { view: TableView; me: SeatView; sound: boolean }) {
   const { send } = useGame();
   const [pre, setPre] = useState<PreAction>(null);
   const fired = useRef("");
@@ -388,7 +433,10 @@ function ActionArea({ view, me }: { view: TableView; me: SeatView }) {
   if (view.legal && !pre) return <ActionBar view={view} me={me} />;
 
   const inHand = me.inHand && !me.folded && !me.allIn && view.street && !view.handComplete;
-  const toggle = (p: PreAction) => setPre(pre === p ? null : p);
+  const toggle = (p: PreAction) => {
+    if (sound) play("click");
+    setPre(pre === p ? null : p);
+  };
   const facingBet = view.currentBet > me.bet;
   return (
     <div className="action-bar idle">
@@ -410,7 +458,13 @@ function ActionArea({ view, me }: { view: TableView; me: SeatView }) {
       ) : (
         <span className="muted small">{me.folded ? "You folded — next hand soon." : view.handComplete ? "Next hand coming up…" : ""}</span>
       )}
-      <button className="btn ghost sit-out" onClick={() => send({ type: "sitOut", tournamentId: view.tournamentId })}>
+      <button
+        className="btn ghost sit-out"
+        onClick={() => {
+          if (sound) play("click");
+          send({ type: "sitOut", tournamentId: view.tournamentId });
+        }}
+      >
         Sit out
       </button>
     </div>

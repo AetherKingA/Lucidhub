@@ -326,6 +326,13 @@ describe("HTTP API", () => {
     expect(res.json().error).toMatch(/name/);
   });
 
+  it("offers the games in games/ to the Connect a game picker", async () => {
+    expect((await app.inject({ url: "/api/games/known" })).statusCode).toBe(401);
+    const admin = startSession({ discordId: "100", username: "Admin", avatar: null });
+    const res = await app.inject({ url: "/api/games/known", cookies: { hub_sid: admin.token } });
+    expect(res.json()).toEqual(["poker", "uno", "chess"]);
+  });
+
   it("saves, replaces and deletes your blind presets per game", async () => {
     const admin = startSession({ discordId: "100", username: "Admin", avatar: null });
     const game = addGame({ key: `blinds${uid()}`, name: "Blinds", baseUrl: "http://127.0.0.1:1" });

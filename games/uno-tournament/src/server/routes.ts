@@ -1,0 +1,77 @@
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import { publicUser, userFromRequest } from "./auth.ts";
+import type { CreateOptions, TournamentManager } from "./tournament/manager.ts";
+import { type Tournament, TournamentError } from "./tournament/tournament.ts";
+
+function requireAdmin(req: FastifyRequest, reply: FastifyReply) {
+  const user = userFromRequest(req);
+  if (!user || !publicUser(user).isAdmin) {
+    reply.code(403).send({ error: "Admins only" });
+    return null;
+  }
+  return user;
+}
+
+/**
+ * Runs one admin operation on a tournament. Shared by the admin routes and the Event Hub integration.
+ * Returns false for an unknown op; throws TournamentError when the op isn't allowed right now.
+ */
+export function runAdminOp(t: Tournament, op: string, actorName: string, body: { userId?: number } | undefined, now: number): boolean {
+  switch (op) {
+    case "start":
+      t.start(now);
+      return true;
+    case "pause":
+      t.pause(`Paused by ${actorName}`, now);
+      return true;
+    case "resume":
+      t.resume(now);
+      return true;
+    case "cancel":
+      t.cancel(now);
+      return true;
+    case "kick":
+      t.kick(Number(body?.userId), now);
+      return true;
+    default:
+      return false;
+  }
+}
+
+export function registerTournamentRoutes(app: FastifyInstance, manager: TournamentManager) {
+  app.get("/api/tournaments", async (req) => manager.list(userFromRequest(req)?.id ?? null));
+
+  app.get<{ Params: { id: string } }>("/api/tournaments/:id", async (req, reply) => {
+    const detail = manager.detail(Number(req.params.id), userFromRequest(req)?.id ?? null);
+    return detail ?? reply.code(404).send({ error: "Tournament not found" });
+  });
+
+  app.post<{ Body: CreateOptions }>("/api/admin/tournaments", async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    return manager.create(req.body ?? ({} as CreateOptions), Date.now()).summary(null);
+  });
+
+  app.post<{ Params: { id: string; op: string }; Body: { userId?: number } }>(
+    "/api/admin/tournaments/:id/:op",
+    async (req, reply) => {
+      const admin = requireAdmin(req, reply);
+      if (!admin) return;
+      const t = manager.get(Number(req.params.id));
+      if (!t) return reply.code(404).send({ error: "Tournament not found" });
+      try {
+        if (!runAdminOp(t, req.params.op, admin.username, req.body, Date.now()))
+          return reply.code(404).send({ error: "Unknown operation" });
+      } catch (err) {
+        if (err instanceof TournamentError) return reply.code(400).send({ error: err.message });
+        throw err;
+      }
+      console.log(`[admin] ${admin.username}: ${req.params.op} "${t.config.name}"`);
+      return t.summary(null);
+    },
+  );
+
+  app.get<{ Params: { id: string } }>("/api/admin/tournaments/:id/flags", async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    return manager.ipFlags(Number(req.params.id));
+  });
+}

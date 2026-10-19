@@ -26,7 +26,7 @@ echo Building the dashboard...
 call npm run build --silent || goto :fail
 
 rem Opens the dashboard in your browser once the hub is up. Game servers set to
-rem "start with LucidHub" (Poker Night...) start too, and stop when this window closes.
+rem "start with LucidHub" start too, and stop when this window closes.
 set OPEN_DASHBOARD=1
 node --disable-warning=ExperimentalWarning src\server\index.ts
 

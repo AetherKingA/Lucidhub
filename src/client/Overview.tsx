@@ -23,7 +23,7 @@ export function OverviewPage() {
               Add your bot token to <code>.env</code> and invite the bot to your server — <a href="#/settings">Settings</a>
             </li>
             <li className={games.length ? "done" : ""}>
-              Connect your first game (Poker Night) — <a href="#/games">Games</a>
+              Connect your first game —<a href="#/games">Games</a>
             </li>
             <li className={prizes.length ? "done" : ""}>
               Create a prize and paste in its codes — <a href="#/prizes">Prizes</a>

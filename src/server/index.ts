@@ -20,7 +20,7 @@ setAlertSink((message) => bot.alert(message));
 const { app, hasBuild } = await buildApp(bot, servers);
 await app.listen({ port: config.port, host: "127.0.0.1" });
 await bot.start();
-// Game servers set to "start with LucidHub" (Poker Night…) come up with the hub.
+// Game servers set to "start with LucidHub" come up with the hub.
 void servers.startAutostart();
 
 const runSafely = (what: string, fn: () => Promise<unknown>) => () =>

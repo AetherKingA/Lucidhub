@@ -113,12 +113,31 @@ export interface LaunchInput {
   funnelPort?: number;
 }
 
-/** Poker Night lives in games/ inside the hub folder, so the dashboard can fill in its launch settings. */
-export function suggestedLaunch(key: string): { launchDir: string; launchCmd: string; publicAccess: boolean } | null {
-  if (key !== "poker") return null;
-  const dir = resolve(ROOT, "games/poker-tournament");
+/** Games that live in games/ inside the hub folder, so the dashboard can fill in their settings. Each gets its own port and public port. */
+const KNOWN_GAMES: Record<string, { folder: string; name: string; baseUrl: string; funnelPort: number }> = {
+  poker: { folder: "games/poker-tournament", name: "Poker Night", baseUrl: "http://127.0.0.1:3000", funnelPort: 443 },
+  uno: { folder: "games/uno-tournament", name: "Uno Night", baseUrl: "http://127.0.0.1:3001", funnelPort: 8443 },
+  chess: { folder: "games/chess-tournament", name: "Chess Night", baseUrl: "http://127.0.0.1:3002", funnelPort: 10000 },
+};
+
+const knownGameDir = (folder: string) => resolve(ROOT, folder);
+const isInstalled = (folder: string) => existsSync(resolve(knownGameDir(folder), "package.json"));
+
+/** Keys of the known games that are actually in games/, in the order the dashboard offers them. */
+export function knownGameKeys() {
+  return Object.entries(KNOWN_GAMES)
+    .filter(([, g]) => isInstalled(g.folder))
+    .map(([key]) => key);
+}
+
+export function suggestedLaunch(
+  key: string,
+): { name: string; baseUrl: string; launchDir: string; launchCmd: string; publicAccess: boolean; funnelPort: number } | null {
+  const known = Object.hasOwn(KNOWN_GAMES, key) ? KNOWN_GAMES[key]! : null;
+  if (!known || !isInstalled(known.folder)) return null;
+  const dir = knownGameDir(known.folder);
   // "npm start" builds the site, then runs the server. Players reach it over the internet.
-  return existsSync(resolve(dir, "package.json")) ? { launchDir: dir, launchCmd: "npm start", publicAccess: true } : null;
+  return { name: known.name, baseUrl: known.baseUrl, launchDir: dir, launchCmd: "npm start", publicAccess: true, funnelPort: known.funnelPort };
 }
 
 /** cmd.exe reads "scripts/hub-start.cmd" as a program "scripts" with a switch, so use backslashes in the program path. */
