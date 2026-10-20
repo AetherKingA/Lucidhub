@@ -8,6 +8,7 @@ import { db } from "../src/server/db.ts";
 import { DeliveryWorker, DmClosedError, type Messenger } from "../src/server/delivery.ts";
 import { getEvent, setRules, upsertEvent } from "../src/server/events.ts";
 import { addGame } from "../src/server/games.ts";
+import { geoipAvailable } from "../src/server/geoip.ts";
 import { ProcessManager } from "../src/server/processes.ts";
 import { addCodes, createPrize, getPrize, listPrizes, parseCodes, updatePrize } from "../src/server/prizes.ts";
 import { prizeName } from "../src/shared/prizeKinds.ts";
@@ -457,7 +458,8 @@ describe("HTTP API", () => {
 
     const admin = startSession({ discordId: "100", username: "Admin", avatar: null });
     const call = (method: "GET" | "POST" | "PUT", url: string, payload?: object) => app.inject({ method, url, payload, cookies: { hub_sid: admin.token } });
-    expect((await call("GET", `/api/events/${id}/players`)).json()).toEqual({ ...lobby, locations: false });
+    // `locations` says whether data/geoip/ holds lookup files on this PC, so it differs per machine.
+    expect((await call("GET", `/api/events/${id}/players`)).json()).toEqual({ ...lobby, locations: geoipAvailable() });
     expect((await call("POST", `/api/events/${id}/players/${did(1)}/approve`, {})).statusCode).toBe(200);
     expect((await call("POST", `/api/events/${id}/players/${did(1)}/kick`, {})).statusCode).toBe(200);
     expect((await call("PUT", `/api/events/${id}/access`, { access: "open" })).statusCode).toBe(200);
