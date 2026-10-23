@@ -13,7 +13,7 @@ process.env.PUBLIC_URL = "https://chess.example";
 
 const { default: Fastify } = await import("fastify");
 const { config } = await import("../src/server/config.ts");
-const { db, upsertUser } = await import("../src/server/db.ts");
+const { db, playerRecord, recordIp, upsertUser } = await import("../src/server/db.ts");
 const { hubSignature, registerIntegrationRoutes } = await import("../src/server/integration.ts");
 const { TournamentManager } = await import("../src/server/tournament/manager.ts");
 const { legalUci } = await import("../src/shared/engine/chess.ts");
@@ -59,6 +59,15 @@ function hub(method: "GET" | "POST", url: string, body?: unknown, opts: { timest
     },
   });
 }
+
+describe("player IPs", () => {
+  it("forgets IPs not seen for 90 days", () => {
+    const u = upsertUser("700000000000000001", "Old IP", null);
+    recordIp(u.id, "203.0.113.5", Date.now() - 91 * 86_400_000);
+    recordIp(u.id, "203.0.113.6");
+    expect(playerRecord(u.id).ips.map((i) => i.ip)).toEqual(["203.0.113.6"]);
+  });
+});
 
 describe("signatures", () => {
   it("accepts a correctly signed request", async () => {

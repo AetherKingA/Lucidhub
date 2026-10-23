@@ -49,7 +49,7 @@ export function cardName(c: Card): string {
   return `${color[0]!.toUpperCase()}${color.slice(1)} ${VALUE_NAMES[v] ?? v}`;
 }
 
-/** Seeded random numbers (mulberry32). The state lives in the game so a saved game replays the same way. */
+/** Seeded random numbers (mulberry32), for tests that need the same deal every time. */
 export function nextRandom(s: { rng: number }): number {
   let t = (s.rng = (s.rng + 0x6d2b79f5) | 0);
   t = Math.imul(t ^ (t >>> 15), t | 1);
@@ -57,10 +57,23 @@ export function nextRandom(s: { rng: number }): number {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
 
-export function shuffle<T>(arr: T[], s: { rng: number }): T[] {
+/**
+ * Fisher–Yates. Seeded (tests) when rng is a number. Real games pass null and use Web Crypto: a seed has
+ * few enough values that a player could find it from their own hand and know every other card.
+ */
+export function shuffle<T>(arr: T[], s: { rng: number | null }): T[] {
   for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(nextRandom(s) * (i + 1));
+    const j = s.rng === null ? secureIndex(i + 1) : Math.floor(nextRandom(s as { rng: number }) * (i + 1));
     [arr[i], arr[j]] = [arr[j]!, arr[i]!];
   }
   return arr;
+}
+
+/** A whole number below `range`, every value equally likely (rejection sampling). */
+function secureIndex(range: number): number {
+  const buf = new Uint32Array(1);
+  const limit = Math.floor(0x100000000 / range) * range;
+  do globalThis.crypto.getRandomValues(buf);
+  while (buf[0]! >= limit);
+  return buf[0]! % range;
 }

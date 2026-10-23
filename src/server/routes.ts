@@ -94,7 +94,7 @@ export function registerRoutes(app: FastifyInstance, bot: Bot, servers: ProcessM
     }
     if (!bot.ready()) attention.push({ kind: "bot_offline", message: "The Discord bot is offline, so prizes are queued, not sent. See Settings." });
     return {
-      upcoming: listEvents({ status: "registering", limit: 10 }).reverse(),
+      upcoming: listEvents({ status: "registering", limit: 10 }),
       live: listEvents({ status: "running", limit: 10 }),
       recentAwards: listAwards({ limit: 10 }),
       attention,

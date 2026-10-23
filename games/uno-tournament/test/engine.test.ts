@@ -80,6 +80,14 @@ describe("dealing", () => {
     const opts = { players: [0, 1, 2].map((i) => ({ playerId: `p${i}`, seat: i })), dealer: 1, stacking: false, seed: 42 };
     expect(startGame(opts)).toEqual(startGame(opts));
   });
+
+  it("shuffles with the secure generator when there's no seed", () => {
+    const opts = { players: [0, 1, 2].map((i) => ({ playerId: `p${i}`, seat: i })), dealer: 1, stacking: false };
+    const a = startGame(opts);
+    expect(a.rng).toBeNull();
+    expect(cardCount(a)).toBe(108);
+    expect(startGame(opts).drawPile).not.toEqual(a.drawPile);
+  });
 });
 
 describe("playing", () => {

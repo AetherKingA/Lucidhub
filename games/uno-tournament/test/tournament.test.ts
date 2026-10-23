@@ -54,6 +54,15 @@ describe("bracket", () => {
     }
   });
 
+  it("deals every hand from the secure generator, never a guessable seed", () => {
+    const t = make(4);
+    t.start(T0);
+    t.tick(T0);
+    const games = [...t.tables.values()].map((tb) => tb.game);
+    expect(games.length).toBeGreaterThan(0);
+    expect(games.every((g) => g !== null && g.rng === null)).toBe(true);
+  });
+
   it("starts by itself at the start time with two or more players, not before", () => {
     const t = make(2);
     t.tick(T0 - 1);

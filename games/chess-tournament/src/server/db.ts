@@ -99,8 +99,12 @@ const recordIpStmt = db.prepare(`
   ON CONFLICT(user_id, ip) DO UPDATE SET last_seen = excluded.last_seen
 `);
 
-export function recordIp(userId: number, ip: string) {
-  const now = Date.now();
+/** Old IPs are dropped: they only help while recent, and carriers hand them to other people later (false shared-IP flags). */
+const IP_KEEP_MS = 90 * 86_400_000;
+const pruneIpsStmt = db.prepare(`DELETE FROM user_ips WHERE last_seen < ?`);
+
+export function recordIp(userId: number, ip: string, now = Date.now()) {
+  pruneIpsStmt.run(now - IP_KEEP_MS);
   recordIpStmt.run(userId, ip, now, now);
 }
 

@@ -463,7 +463,6 @@ export class Tournament {
       players: seated,
       dealer: seated.findIndex((p) => p.seat === t.dealer),
       stacking: this.config.stacking,
-      seed: Math.floor(this.random() * 2 ** 31),
     });
     t.handNo++;
     t.lastResult = null;

@@ -61,8 +61,10 @@ function toEvent(r: EventDbRow): HubEvent {
 }
 
 export function listEvents(filter: { status?: string; limit?: number } = {}): HubEvent[] {
+  // Upcoming events soonest first, so a limit keeps the next ones; everything else newest first.
+  const order = filter.status === "registering" ? "ASC" : "DESC";
   const rows = filter.status
-    ? (db.prepare(`${EVENT_SELECT} WHERE e.status = ? ORDER BY e.start_time DESC LIMIT ?`).all(filter.status, filter.limit ?? 200) as EventDbRow[])
+    ? (db.prepare(`${EVENT_SELECT} WHERE e.status = ? ORDER BY e.start_time ${order} LIMIT ?`).all(filter.status, filter.limit ?? 200) as EventDbRow[])
     : (db.prepare(`${EVENT_SELECT} ORDER BY (e.status IN ('registering','running')) DESC, e.start_time DESC LIMIT ?`).all(filter.limit ?? 200) as EventDbRow[]);
   return rows.map(toEvent);
 }

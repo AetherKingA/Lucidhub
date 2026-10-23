@@ -6,7 +6,7 @@ import { awardEvent, cancelAward, createAwards, fillWaitingAwards, listAwards, p
 import type { Bot } from "../src/server/bot.ts";
 import { db } from "../src/server/db.ts";
 import { DeliveryWorker, DmClosedError, type Messenger } from "../src/server/delivery.ts";
-import { getEvent, setRules, upsertEvent } from "../src/server/events.ts";
+import { getEvent, listEvents, setRules, upsertEvent } from "../src/server/events.ts";
 import { addGame } from "../src/server/games.ts";
 import { geoipAvailable } from "../src/server/geoip.ts";
 import { ProcessManager } from "../src/server/processes.ts";
@@ -57,6 +57,17 @@ describe("upsertEvent watchUrl", () => {
     expect(upsertEvent(game.id, { ...base, watchUrl: "javascript:alert(1)" }).watchUrl).toBeNull();
     upsertEvent(game.id, { ...base, watchUrl: url });
     expect(upsertEvent(game.id, base).watchUrl).toBeNull();
+  });
+});
+
+describe("listEvents", () => {
+  it("lists upcoming events soonest first, so a limit keeps the next ones", () => {
+    const game = addGame({ key: `g${uid()}`, name: "Test game", baseUrl: "http://game.test" });
+    const day = 86_400_000;
+    for (const [name, inDays] of [["Later", 3], ["Tomorrow", 1], ["Next week", 7]] as const)
+      upsertEvent(game.id, { id: uid(), name, status: "registering", startTime: Date.now() + inDays * day, entrants: 0, maxPlayers: 8, startedAt: null, finishedAt: null, url: null });
+    const mine = listEvents({ status: "registering" }).filter((e) => e.gameId === game.id);
+    expect(mine.map((e) => e.name)).toEqual(["Tomorrow", "Later", "Next week"]);
   });
 });
 
@@ -277,6 +288,25 @@ describe("DeliveryWorker", () => {
     expect(a!.status).toBe("dm_failed");
     expect(m.posts.some((x) => x.text.includes(`<@${did(77)}>`) && x.text.includes("/prizes"))).toBe(true);
     expect(prizesForUser(did(77))[0]).toMatchObject({ eventName: ev.name, status: "dm_failed" });
+  });
+
+  it("skips a prize that was cancelled while the batch was being sent", async () => {
+    const { ev } = setupEvent();
+    const key = createPrize({ name: "Cancel me", type: "code_pool" });
+    addCodes(key.id, ["C-1", "C-2"]);
+    setRules(ev.id, [{ placeFrom: 1, placeTo: 2, prizeId: key.id }]);
+    createAwards(ev.id, results(2));
+    const second = listAwards({ eventId: ev.id }).find((a) => a.place === 2)!;
+
+    const m = new FakeMessenger();
+    const send = m.sendDm.bind(m);
+    m.sendDm = async (to, msg) => {
+      if (to === did(1)) cancelAward(second.id, "test"); // the admin clicks Cancel mid-batch
+      return send(to, msg);
+    };
+    await new DeliveryWorker(m).tick();
+    expect(m.dms.filter((d) => d.text.includes(ev.name)).map((d) => d.to)).toEqual([did(1)]);
+    expect(listAwards({ eventId: ev.id }).find((a) => a.id === second.id)!.status).toBe("cancelled");
   });
 
   it("retries a temporary Discord error later instead of giving up", async () => {

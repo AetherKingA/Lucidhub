@@ -1,6 +1,6 @@
 // One Uno hand as a pure state machine: startGame() deals, applyAction() returns the next state.
-// No I/O and no Math.random: shuffles use the seeded generator stored in the state, so a saved game
-// continues exactly as it would have, and tests are repeatable.
+// No I/O and no Math.random: real games shuffle with the secure generator; tests pass a seed so deals
+// repeat. The whole state (draw pile included) is saved, so a restored game continues as it was.
 //
 // Official rules, plus an optional "stacking" house rule:
 // - Match the top card by color or value, or play a Wild. Wild Draw Four only when you hold no card of
@@ -59,7 +59,8 @@ export interface GameState {
   winner: string | null;
   /** Recent events, newest last (for the table view and chat). */
   log: GameEvent[];
-  rng: number;
+  /** Seeded generator state (tests only); null = shuffle with the secure generator. */
+  rng: number | null;
 }
 
 export type Action =
@@ -78,7 +79,8 @@ export interface StartOptions {
   /** Index into players of the dealer; the player after them starts. */
   dealer: number;
   stacking: boolean;
-  seed: number;
+  /** Tests only: the same seed gives the same deal. Real games leave it out. */
+  seed?: number;
 }
 
 export function startGame(opts: StartOptions): GameState {
@@ -96,7 +98,7 @@ export function startGame(opts: StartOptions): GameState {
     stacking: opts.stacking,
     winner: null,
     log: [],
-    rng: opts.seed | 0,
+    rng: opts.seed === undefined ? null : opts.seed | 0,
   };
   g.drawPile = shuffle(fullDeck(), g);
   for (let i = 0; i < HAND_SIZE; i++) for (const p of g.players) p.hand.push(g.drawPile.pop()!);

@@ -26,8 +26,10 @@ const dueStmt = db.prepare(
    FROM awards a JOIN prizes p ON p.id = a.prize_id
    WHERE a.status = 'pending' AND a.next_attempt_at <= ? ORDER BY a.id LIMIT ?`,
 );
-const sentStmt = db.prepare(`UPDATE awards SET status = 'sent', sent_at = ?, attempts = attempts + 1, last_error = NULL WHERE id = ?`);
-const failStmt = db.prepare(`UPDATE awards SET status = ?, attempts = ?, next_attempt_at = ?, last_error = ? WHERE id = ?`);
+const stillDueStmt = db.prepare(`SELECT 1 FROM awards WHERE id = ? AND status = 'pending'`);
+// Only while still pending, so a cancel during the send isn't overwritten.
+const sentStmt = db.prepare(`UPDATE awards SET status = 'sent', sent_at = ?, attempts = attempts + 1, last_error = NULL WHERE id = ? AND status = 'pending'`);
+const failStmt = db.prepare(`UPDATE awards SET status = ?, attempts = ?, next_attempt_at = ?, last_error = ? WHERE id = ? AND status = 'pending'`);
 
 const MEDALS = ["🥇", "🥈", "🥉"];
 
@@ -54,6 +56,9 @@ export class DeliveryWorker {
   private async sendDue(now: number) {
     const due = dueStmt.all(now, BATCH) as { id: number; discord_id: string; username: string; attempts: number; event_id: number; prize_name: string }[];
     for (const a of due) {
+      // The batch was read before the first DM: skip prizes cancelled or handled by hand since.
+      // shortcut: a cancel that lands during this very DM still returns the code to the pool; add a "sending" status if that ever bites.
+      if (!stillDueStmt.get(a.id)) continue;
       const msg = renderAward(a.id);
       if (!msg) continue;
       try {
